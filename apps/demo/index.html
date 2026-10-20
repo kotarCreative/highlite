@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A fictional analytics dashboard for trying the Highlite narrated context capture SDK."
+    />
+    <title>Northstar Analytics — Highlite demo</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Main navigation">
+        <a class="brand" href="#overview"><span class="brand-mark">N</span> northstar</a>
+        <div class="workspace-label">WORKSPACE</div>
+        <a class="nav-link active" href="#overview"><span>◫</span> Overview</a>
+        <a class="nav-link" href="#analytics"><span>▥</span> Analytics</a>
+        <a class="nav-link" href="#customers"><span>♙</span> Customers</a>
+        <a class="nav-link" href="#reports"><span>▤</span> Reports</a>
+        <div class="sidebar-bottom">
+          <div class="avatar">AC</div>
+          <div><strong>Alex Chen</strong><small>Growth team</small></div>
+          <span class="more">···</span>
+        </div>
+      </aside>
+
+      <main class="dashboard">
+        <header class="topbar">
+          <div class="breadcrumbs">Workspace <span>/</span> Analytics</div>
+          <div class="top-actions">
+            <button class="icon-button" type="button" aria-label="Help">?</button>
+            <button class="share-button" type="button">Share dashboard <span>↗</span></button>
+          </div>
+        </header>
+
+        <div class="content-grid">
+          <section class="overview" aria-labelledby="page-title">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">MONDAY, OCTOBER 20, 2026</p>
+                <h1 id="page-title">Analytics overview</h1>
+                <p class="subtitle">A clear view of the metrics moving your business.</p>
+              </div>
+              <label class="date-control" for="date-range">
+                <span aria-hidden="true">▦</span>
+                <select id="date-range" data-context-id="date-range">
+                  <option value="30">Last 30 days</option>
+                  <option value="7">Last 7 days</option>
+                  <option value="90">Last 90 days</option>
+                </select>
+                <span aria-hidden="true">⌄</span>
+              </label>
+            </div>
+
+            <div class="metric-grid">
+              <button
+                class="metric-card featured"
+                type="button"
+                data-context-id="net-retention"
+                aria-label="Net retention, 112 percent, up 4.8 percent"
+              >
+                <span class="metric-top"
+                  ><span>Net retention</span><span class="metric-menu">···</span></span
+                >
+                <strong id="retention-value" class="metric-value">112%</strong>
+                <span class="metric-bottom"
+                  ><span class="trend up">↗ 4.8%</span><span>vs. previous period</span></span
+                >
+                <span class="sparkline" aria-hidden="true"
+                  ><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i
+                ></span>
+              </button>
+              <article class="metric-card">
+                <span class="metric-top"
+                  ><span>Monthly recurring revenue</span><span class="metric-menu">···</span></span
+                >
+                <strong class="metric-value">$284,390</strong>
+                <span class="metric-bottom"
+                  ><span class="trend up">↗ 8.2%</span><span>vs. previous period</span></span
+                >
+                <span class="mini-bars" aria-hidden="true"
+                  ><i></i><i></i><i></i><i></i><i></i><i></i><i></i
+                ></span>
+              </article>
+              <article class="metric-card">
+                <span class="metric-top"
+                  ><span>Churn rate</span><span class="metric-menu">···</span></span
+                >
+                <strong class="metric-value">2.4%</strong>
+                <span class="metric-bottom"
+                  ><span class="trend down">↘ 0.6%</span><span>vs. previous period</span></span
+                >
+                <span class="mini-bars coral" aria-hidden="true"
+                  ><i></i><i></i><i></i><i></i><i></i><i></i><i></i
+                ></span>
+              </article>
+            </div>
+
+            <section class="chart-card" aria-labelledby="revenue-title">
+              <div class="card-heading">
+                <div>
+                  <h2 id="revenue-title">Revenue over time</h2>
+                  <p id="range-caption">Daily revenue · Last 30 days</p>
+                </div>
+                <button class="chart-menu" type="button" aria-label="Revenue chart options">
+                  ···
+                </button>
+              </div>
+              <div class="chart-legend">
+                <span><i></i> This period</span><span><i></i> Previous period</span>
+              </div>
+              <div class="chart" role="img" aria-label="Revenue trend chart">
+                <div class="y-labels">
+                  <span>$30k</span><span>$20k</span><span>$10k</span><span>$0</span>
+                </div>
+                <div class="plot">
+                  <div class="grid-lines"><i></i><i></i><i></i><i></i></div>
+                  <svg viewBox="0 0 700 190" preserveAspectRatio="none" aria-hidden="true">
+                    <path
+                      class="previous-line"
+                      d="M0 142 C45 136 55 154 100 128 S165 110 200 122 S265 82 300 104 S365 91 400 110 S465 64 500 81 S565 70 600 86 S665 48 700 56"
+                    />
+                    <path
+                      class="current-area"
+                      d="M0 130 C45 122 55 136 100 112 S165 90 200 104 S265 62 300 82 S365 72 400 85 S465 51 500 58 S565 34 600 52 S665 22 700 27 L700 190 L0 190 Z"
+                    />
+                    <path
+                      class="current-line"
+                      d="M0 130 C45 122 55 136 100 112 S165 90 200 104 S265 62 300 82 S365 72 400 85 S465 51 500 58 S565 34 600 52 S665 22 700 27"
+                    />
+                    <circle cx="600" cy="52" r="5" />
+                  </svg>
+                  <div class="x-labels">
+                    <span>Oct 1</span><span>Oct 7</span><span>Oct 14</span><span>Oct 20</span
+                    ><span>Oct 30</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="lower-grid">
+              <article class="lower-card">
+                <div class="card-heading">
+                  <div>
+                    <h2>Top segments</h2>
+                    <p>By net revenue</p>
+                  </div>
+                  <button class="text-button" type="button">View all</button>
+                </div>
+                <div class="segment-row">
+                  <span class="segment-icon purple">S</span
+                  ><span class="segment-name">Scale plan</span><strong>$128,420</strong
+                  ><span class="trend up">+12%</span>
+                </div>
+                <div class="segment-row">
+                  <span class="segment-icon blue">G</span
+                  ><span class="segment-name">Growth plan</span><strong>$96,280</strong
+                  ><span class="trend up">+8%</span>
+                </div>
+                <div class="segment-row">
+                  <span class="segment-icon green">E</span
+                  ><span class="segment-name">Essentials</span><strong>$59,690</strong
+                  ><span class="trend down">−2%</span>
+                </div>
+              </article>
+              <article class="lower-card insight-card">
+                <div class="insight-icon">✦</div>
+                <p class="eyebrow">NORTHSTAR INSIGHT</p>
+                <h2>Expansion is leading growth</h2>
+                <p>Existing customers drove 68% of new revenue this month.</p>
+                <button class="text-button" type="button">Explore insight <span>→</span></button>
+              </article>
+            </section>
+          </section>
+
+          <aside class="capture-preview" aria-labelledby="preview-title">
+            <div class="preview-head">
+              <div><span class="preview-dot"></span> LOCAL PREVIEW</div>
+              <span class="lock">⌑ Private</span>
+            </div>
+            <h2 id="preview-title">Agent-ready context</h2>
+            <p class="preview-description">
+              Stop a capture to inspect exactly what Highlite assembled. Nothing is uploaded by this
+              demo.
+            </p>
+            <div id="preview-empty" class="preview-empty">
+              <div class="empty-illustration"><span>◉</span><i>↗</i><b>•••</b></div>
+              <strong>Your capture will appear here</strong>
+              <span>Record, mark the retention metric, then change the date range.</span>
+            </div>
+            <div id="preview-result" class="preview-result" hidden>
+              <div class="preview-stats">
+                <span id="frame-count">0 frames</span><span id="event-count">0 events</span
+                ><span id="audio-status">No audio</span>
+              </div>
+              <h3>summary.md</h3>
+              <pre id="summary-preview"></pre>
+              <details>
+                <summary>Structured manifest.json</summary>
+                <pre id="manifest-preview"></pre>
+              </details>
+              <div id="frame-list" class="frame-list"></div>
+            </div>
+            <div class="privacy-note">
+              <span>ⓘ</span
+              ><span
+                >Mic and tab capture are requested only when you press Record. Screenshots are not
+                automatically redacted.</span
+              >
+            </div>
+          </aside>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

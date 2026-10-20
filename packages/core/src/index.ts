@@ -16,6 +16,95 @@ export interface TimelineEvent {
   payload: Record<string, unknown>;
 }
 
+export interface ViewportRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface Target {
+  id: string;
+  tag?: string;
+  role?: string;
+  label?: string;
+  textExcerpt?: string;
+  selector?: string;
+  rect: ViewportRect;
+  pageUrl: string;
+  metadata?: Record<string, string | number | boolean>;
+}
+
+export type AnnotationKind = 'freehand' | 'circle' | 'arrow' | 'highlight';
+
+export interface Annotation {
+  id: string;
+  atMs: number;
+  kind: AnnotationKind;
+  points: Array<{ x: number; y: number }>;
+  coordinateSpace: 'viewport-normalized';
+  targetId?: string;
+}
+
+export interface TranscriptSegment {
+  startMs: number;
+  endMs: number;
+  text: string;
+  wordTimings?: Array<{ startMs: number; endMs: number; text: string }>;
+}
+
+export interface Keyframe {
+  id: string;
+  atMs: number;
+  imagePath: string;
+  targetIds: string[];
+  annotationIds: string[];
+  transcriptSegmentIds: string[];
+  reason: 'mark' | 'annotation' | 'interaction' | 'visual-change' | 'speech-cue';
+}
+
+export interface HighliteManifest {
+  schemaVersion: '0.1.0';
+  sessionId: string;
+  createdAt: string;
+  page: { initialUrl: string; title: string };
+  durationMs: number;
+  timeline: TimelineEvent[];
+  targets: Target[];
+  annotations: Annotation[];
+  transcript: TranscriptSegment[];
+  keyframes: Keyframe[];
+  artifacts: { audio?: string; video?: string; contactSheet?: string };
+  audioOffsetMs?: number;
+  captureWarnings: string[];
+}
+
+export interface HighliteBundle {
+  manifest: HighliteManifest;
+  summary: string;
+  files: Record<string, Blob>;
+}
+
+export interface RawCapture {
+  manifest: HighliteManifest;
+  files: Record<string, Blob>;
+}
+
+export interface Processor {
+  process(input: RawCapture): Promise<HighliteBundle>;
+}
+
+export interface Transcriber {
+  transcribe(audio: Blob): Promise<TranscriptSegment[]>;
+}
+
+export interface FrameProvider {
+  start(): Promise<void>;
+  capture(atMs: number): Promise<Blob | null>;
+  stop(): Promise<void>;
+  onEnded?(handler: () => void): () => void;
+}
+
 export interface MonotonicClock {
   now(): number;
 }
@@ -30,7 +119,8 @@ const defaultClock: MonotonicClock = {
 };
 
 function defaultId(): string {
-  return globalThis.crypto.randomUUID();
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+  return `event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export class SessionTimeline {
@@ -72,3 +162,5 @@ export class SessionTimeline {
     return this.#events.map((event) => ({ ...event, payload: { ...event.payload } }));
   }
 }
+
+export { buildSummary } from './summary';

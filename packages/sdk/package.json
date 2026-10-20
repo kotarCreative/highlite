@@ -1,0 +1,26 @@
+{
+  "name": "@highlite/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/highlite.js",
+  "module": "./dist/highlite.js",
+  "types": "./dist/index.d.ts",
+  "unpkg": "./dist/highlite.iife.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/highlite.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/build-sdk.mjs"
+  },
+  "dependencies": {
+    "@highlite/core": "workspace:*",
+    "jszip": "^3.10.1"
+  }
+}

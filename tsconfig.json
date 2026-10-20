@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "noImplicitOverride": true,
@@ -11,7 +12,11 @@
     "noUnusedParameters": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "paths": {
+      "@highlite/core": ["packages/core/src/index.ts"],
+      "@highlite/sdk": ["packages/sdk/src/index.ts"]
+    }
   },
   "include": ["packages/**/*.ts", "apps/**/*.ts"]
 }
