@@ -13,11 +13,13 @@
     "test": "vitest run",
     "test:e2e": "pnpm build && node scripts/browser-smoke.mjs && pnpm build:rust && node scripts/compiler-e2e.mjs",
     "test:compiler:e2e": "pnpm build && pnpm build:rust && node scripts/compiler-e2e.mjs",
+    "test:parakeet": "pnpm build:rust && node scripts/parakeet-e2e.mjs",
     "rust:fmt": "cargo fmt --all -- --check",
     "rust:lint": "cargo clippy --workspace --all-targets -- -D warnings",
     "rust:test": "cargo test --workspace",
     "check:rust": "pnpm rust:fmt && pnpm rust:lint && pnpm rust:test",
     "build:rust": "cargo build --workspace --release",
+    "bundle": "cargo run -p highlite-compiler -- bundle",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:rust"
   },
   "devDependencies": {

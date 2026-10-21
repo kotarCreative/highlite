@@ -129,20 +129,20 @@ fn derives_crops_from_targets_and_annotations() {
     let mark = compiled.keyframes[1].crop.unwrap();
     let annotation = compiled.keyframes[2].crop.unwrap();
 
-    assert!((click.x - 0.056).abs() < 0.001);
-    assert!((click.y - 0.195).abs() < 0.001);
-    assert!((click.width - 0.208).abs() < 0.001);
-    assert!((click.height - 0.11).abs() < 0.001);
+    assert!((click.x - 0.0).abs() < 0.001);
+    assert!((click.y - 0.05).abs() < 0.001);
+    assert!((click.width - 0.4).abs() < 0.001);
+    assert!((click.height - 0.4).abs() < 0.001);
 
     assert!((mark.x - 0.176).abs() < 0.001);
-    assert!((mark.y - 0.345).abs() < 0.001);
+    assert!((mark.y - 0.3).abs() < 0.001);
     assert!((mark.width - 0.448).abs() < 0.001);
-    assert!((mark.height - 0.31).abs() < 0.001);
+    assert!((mark.height - 0.4).abs() < 0.001);
 
-    assert!((annotation.x - 0.176).abs() < 0.001);
-    assert!((annotation.y - 0.27).abs() < 0.001);
-    assert!((annotation.width - 0.248).abs() < 0.001);
-    assert!((annotation.height - 0.26).abs() < 0.001);
+    assert!((annotation.x - 0.1).abs() < 0.001);
+    assert!((annotation.y - 0.2).abs() < 0.001);
+    assert!((annotation.width - 0.4).abs() < 0.001);
+    assert!((annotation.height - 0.4).abs() < 0.001);
 
     assert!(compiled.keyframes[3].crop.is_none());
 }
@@ -307,4 +307,79 @@ fn reports_missing_visual_evidence_instead_of_inventing_frames() {
             .summary
             .contains("- 0:03 — “This is the filter that breaks the chart.”")
     );
+}
+
+#[test]
+fn a_strong_spoken_cue_promotes_a_nearby_frame() {
+    let mut request = input();
+    request.manifest.transcript = vec![highlite_compiler::TranscriptSegment {
+        id: Some("cue".to_owned()),
+        start_ms: 5_000,
+        end_ms: 5_600,
+        text: "look here".to_owned(),
+        word_timings: common::words("look here", 5_000, 5_600),
+    }];
+    request.manifest.keyframes = vec![highlite_compiler::Keyframe {
+        id: "cue-frame".to_owned(),
+        at_ms: 5_200,
+        image_path: "frames/cue.png".to_owned(),
+        target_ids: Vec::new(),
+        annotation_ids: Vec::new(),
+        transcript_segment_ids: Vec::new(),
+        reason: highlite_compiler::KeyframeReason::Interaction,
+    }];
+    request.options = Some(CompileOptions {
+        max_keyframes: Some(1),
+        ..CompileOptions::default()
+    });
+
+    let compiled = compile_capture(&request);
+    assert_eq!(compiled.keyframes.len(), 1);
+    assert_eq!(compiled.keyframes[0].cue.as_deref(), Some("look"));
+    assert!(
+        compiled.keyframes[0]
+            .score_reasons
+            .iter()
+            .any(|reason| reason == "cue:look")
+    );
+    assert!(compiled.summary.contains("cue “look”"));
+}
+
+#[test]
+fn weak_demonstratives_do_not_retarget_plain_interactions() {
+    let mut request = input();
+    request.manifest.transcript = vec![highlite_compiler::TranscriptSegment {
+        id: Some("filler".to_owned()),
+        start_ms: 4_100,
+        end_ms: 4_400,
+        text: "that".to_owned(),
+        word_timings: common::words("that", 4_100, 4_400),
+    }];
+    request.manifest.keyframes.retain(|frame| frame.id == "f1");
+    request.options = Some(CompileOptions {
+        max_keyframes: Some(1),
+        ..CompileOptions::default()
+    });
+
+    let compiled = compile_capture(&request);
+    assert_eq!(compiled.keyframes.len(), 1);
+    assert_eq!(compiled.keyframes[0].cue, None);
+}
+
+#[test]
+fn warns_when_a_strong_cue_has_no_frame_nearby() {
+    let mut request = input();
+    request.manifest.transcript = vec![highlite_compiler::TranscriptSegment {
+        id: Some("cue".to_owned()),
+        start_ms: 5_000,
+        end_ms: 5_400,
+        text: "look".to_owned(),
+        word_timings: common::words("look", 5_000, 5_400),
+    }];
+    request.manifest.keyframes.retain(|frame| frame.id == "f5");
+
+    let compiled = compile_capture(&request);
+    assert!(compiled.warnings.iter().any(|warning| {
+        warning.contains("Speech cue “look”") && warning.contains("no captured frame nearby")
+    }));
 }

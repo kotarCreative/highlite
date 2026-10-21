@@ -226,6 +226,12 @@ pub struct CompileOptions {
     pub crop: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<bool>,
+    /// Detect spoken cues ("here", "look", "watch", …) and keep nearby frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speech_cues: Option<bool>,
+    /// How close a frame must be to a strong cue to be selected by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cue_window_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compiled_at: Option<String>,
 }
@@ -264,6 +270,9 @@ pub struct CompiledKeyframe {
     pub transcript_segment_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub said: Option<String>,
+    /// The spoken cue word that selected this frame, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cue: Option<String>,
     pub score: i32,
     pub score_reasons: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -333,6 +342,8 @@ pub struct EffectiveOptions {
     pub clause_gap_ms: u64,
     pub crop: bool,
     pub coverage: bool,
+    pub speech_cues: bool,
+    pub cue_window_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

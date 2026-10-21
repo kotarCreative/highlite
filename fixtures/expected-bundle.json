@@ -9,10 +9,10 @@
       "title": "Analytics"
     },
     "viewport": {
-      "x": 0,
-      "y": 0,
-      "width": 1000,
-      "height": 800
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1000.0,
+      "height": 800.0
     },
     "durationMs": 60000,
     "timeline": [
@@ -69,8 +69,8 @@
         "kind": "navigate",
         "payload": {
           "from": "https://app.example.com/analytics",
-          "to": "https://app.example.com/settings",
-          "source": "pushState"
+          "source": "pushState",
+          "to": "https://app.example.com/settings"
         }
       }
     ],
@@ -82,15 +82,15 @@
         "label": "Date range",
         "selector": "#date-range",
         "rect": {
-          "x": 80,
-          "y": 180,
-          "width": 160,
-          "height": 40
+          "x": 80.0,
+          "y": 180.0,
+          "width": 160.0,
+          "height": 40.0
         },
         "pageUrl": "https://app.example.com/analytics",
         "metadata": {
-          "docsId": "analytics.date-range",
-          "component": "DateRange"
+          "component": "DateRange",
+          "docsId": "analytics.date-range"
         }
       },
       {
@@ -100,10 +100,10 @@
         "label": "Retention metric",
         "selector": "#retention",
         "rect": {
-          "x": 200,
-          "y": 300,
-          "width": 400,
-          "height": 200
+          "x": 200.0,
+          "y": 300.0,
+          "width": 400.0,
+          "height": 200.0
         },
         "pageUrl": "https://app.example.com/analytics",
         "metadata": {
@@ -303,10 +303,10 @@
     "captureWarnings": []
   },
   "viewport": {
-    "x": 0,
-    "y": 0,
-    "width": 1000,
-    "height": 800
+    "x": 0.0,
+    "y": 0.0,
+    "width": 1000.0,
+    "height": 800.0
   },
   "keyframes": [
     {
@@ -318,14 +318,14 @@
       "targetIds": ["t1"],
       "annotationIds": [],
       "transcriptSegmentIds": ["s1"],
+      "said": "This is the filter that breaks the chart.",
       "score": 72,
       "scoreReasons": ["reason:interaction", "target", "event:click"],
-      "said": "This is the filter that breaks the chart.",
       "crop": {
-        "x": 0.056,
-        "y": 0.195,
-        "width": 0.208,
-        "height": 0.11
+        "x": 0.0,
+        "y": 0.05,
+        "width": 0.4,
+        "height": 0.4
       }
     },
     {
@@ -337,14 +337,15 @@
       "targetIds": ["t2"],
       "annotationIds": [],
       "transcriptSegmentIds": ["s2"],
-      "score": 120,
-      "scoreReasons": ["reason:mark", "target", "event:mark"],
       "said": "And here the retention number drops.",
+      "cue": "here",
+      "score": 144,
+      "scoreReasons": ["reason:mark", "target", "event:mark", "cue:here"],
       "crop": {
         "x": 0.176,
-        "y": 0.345,
+        "y": 0.3,
         "width": 0.448,
-        "height": 0.31
+        "height": 0.4
       }
     },
     {
@@ -356,14 +357,14 @@
       "targetIds": ["t2"],
       "annotationIds": ["a1"],
       "transcriptSegmentIds": ["s3"],
+      "said": "I am circling the number that moved.",
       "score": 116,
       "scoreReasons": ["reason:annotation", "target", "annotation", "event:annotation"],
-      "said": "I am circling the number that moved.",
       "crop": {
-        "x": 0.176,
-        "y": 0.27,
-        "width": 0.248,
-        "height": 0.26
+        "x": 0.1,
+        "y": 0.2,
+        "width": 0.4,
+        "height": 0.4
       }
     },
     {
@@ -529,7 +530,7 @@
         "atMs": 4000,
         "segmentIds": ["s1"],
         "keyframeIds": ["f1"],
-        "confidence": 1
+        "confidence": 1.0
       },
       {
         "eventId": "event-click",
@@ -537,7 +538,7 @@
         "atMs": 4100,
         "segmentIds": ["s1"],
         "keyframeIds": ["f1"],
-        "confidence": 1
+        "confidence": 1.0
       },
       {
         "eventId": "event-mark",
@@ -545,7 +546,7 @@
         "atMs": 12000,
         "segmentIds": ["s2"],
         "keyframeIds": ["f3"],
-        "confidence": 1
+        "confidence": 1.0
       },
       {
         "eventId": "event-annotation",
@@ -553,7 +554,7 @@
         "atMs": 25000,
         "segmentIds": ["s3"],
         "keyframeIds": ["f4"],
-        "confidence": 1
+        "confidence": 1.0
       },
       {
         "eventId": "event-navigate",
@@ -561,7 +562,7 @@
         "atMs": 40000,
         "segmentIds": [],
         "keyframeIds": ["f5"],
-        "confidence": 1
+        "confidence": 1.0
       }
     ],
     "keyframes": [
@@ -574,14 +575,14 @@
         "targetIds": ["t1"],
         "annotationIds": [],
         "transcriptSegmentIds": ["s1"],
+        "said": "This is the filter that breaks the chart.",
         "score": 72,
         "scoreReasons": ["reason:interaction", "target", "event:click"],
-        "said": "This is the filter that breaks the chart.",
         "crop": {
-          "x": 0.056,
-          "y": 0.195,
-          "width": 0.208,
-          "height": 0.11
+          "x": 0.0,
+          "y": 0.05,
+          "width": 0.4,
+          "height": 0.4
         }
       },
       {
@@ -593,14 +594,15 @@
         "targetIds": ["t2"],
         "annotationIds": [],
         "transcriptSegmentIds": ["s2"],
-        "score": 120,
-        "scoreReasons": ["reason:mark", "target", "event:mark"],
         "said": "And here the retention number drops.",
+        "cue": "here",
+        "score": 144,
+        "scoreReasons": ["reason:mark", "target", "event:mark", "cue:here"],
         "crop": {
           "x": 0.176,
-          "y": 0.345,
+          "y": 0.3,
           "width": 0.448,
-          "height": 0.31
+          "height": 0.4
         }
       },
       {
@@ -612,14 +614,14 @@
         "targetIds": ["t2"],
         "annotationIds": ["a1"],
         "transcriptSegmentIds": ["s3"],
+        "said": "I am circling the number that moved.",
         "score": 116,
         "scoreReasons": ["reason:annotation", "target", "annotation", "event:annotation"],
-        "said": "I am circling the number that moved.",
         "crop": {
-          "x": 0.176,
-          "y": 0.27,
-          "width": 0.248,
-          "height": 0.26
+          "x": 0.1,
+          "y": 0.2,
+          "width": 0.4,
+          "height": 0.4
         }
       },
       {
@@ -643,15 +645,15 @@
         "label": "Date range",
         "selector": "#date-range",
         "rect": {
-          "x": 80,
-          "y": 180,
-          "width": 160,
-          "height": 40
+          "x": 80.0,
+          "y": 180.0,
+          "width": 160.0,
+          "height": 40.0
         },
         "pageUrl": "https://app.example.com/analytics",
         "metadata": {
-          "docsId": "analytics.date-range",
-          "component": "DateRange"
+          "component": "DateRange",
+          "docsId": "analytics.date-range"
         }
       },
       {
@@ -661,10 +663,10 @@
         "label": "Retention metric",
         "selector": "#retention",
         "rect": {
-          "x": 200,
-          "y": 300,
-          "width": 400,
-          "height": 200
+          "x": 200.0,
+          "y": 300.0,
+          "width": 400.0,
+          "height": 200.0
         },
         "pageUrl": "https://app.example.com/analytics",
         "metadata": {
@@ -697,8 +699,8 @@
         "docsId": "analytics.date-range",
         "label": "Date range",
         "metadata": {
-          "docsId": "analytics.date-range",
-          "component": "DateRange"
+          "component": "DateRange",
+          "docsId": "analytics.date-range"
         }
       },
       {
@@ -712,7 +714,7 @@
     ],
     "warnings": []
   },
-  "summary": "[highlite 1:00 · app.example.com/analytics “Analytics” · session-1]\nPage: https://app.example.com/analytics\n- #1 (0:04) [clicked button “Date range”] “This is the filter that breaks the chart.”\n  docs: analytics.date-range\n- #2 (0:12) [marked “Retention metric”] “And here the retention number drops.”\n  docs: analytics.net-retention\n- #3 (0:25) [annotated circle on “Retention metric”] “I am circling the number that moved.”\n  docs: analytics.net-retention\n- #4 (0:40) [navigated to https://app.example.com/settings]\n",
+  "summary": "[highlite 1:00 · app.example.com/analytics “Analytics” · session-1]\nPage: https://app.example.com/analytics\n- #1 (0:04) [clicked button “Date range”] “This is the filter that breaks the chart.”\n  docs: analytics.date-range\n- #2 (0:12) [marked “Retention metric”] “And here the retention number drops.” · cue “here”\n  docs: analytics.net-retention\n- #3 (0:25) [annotated circle on “Retention metric”] “I am circling the number that moved.”\n  docs: analytics.net-retention\n- #4 (0:40) [navigated to https://app.example.com/settings]\n",
   "warnings": [],
   "provenance": {
     "compiler": {
@@ -725,7 +727,9 @@
       "minGapMs": 500,
       "clauseGapMs": 1500,
       "crop": true,
-      "coverage": true
+      "coverage": true,
+      "speechCues": true,
+      "cueWindowMs": 1200
     }
   }
 }

@@ -9,11 +9,11 @@
     "windowTitle": "Analytics",
     "displayId": 0,
     "frame": {
-      "x": 0,
-      "y": 0,
-      "width": 1000,
-      "height": 800,
-      "scale": 1
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1000.0,
+      "height": 800.0,
+      "scale": 1.0
     }
   },
   "transcript": {
@@ -148,8 +148,8 @@
     {
       "t0": 25000,
       "t1": 25000,
-      "fw": 1000,
-      "fh": 800,
+      "fw": 1000.0,
+      "fh": 800.0,
       "laser": false,
       "pts": [2000, 3000, 0, 4000, 5000, 0]
     }

@@ -183,9 +183,14 @@ pub fn build_handoff_summary(
                 .as_ref()
                 .map(|said| format!(" {}", quote(said)))
                 .unwrap_or_default();
+            let cue = frame
+                .cue
+                .as_ref()
+                .map(|cue| format!(" · cue {}", quote(cue)))
+                .unwrap_or_default();
             let _ = writeln!(
                 out,
-                "- #{} ({}){}{}",
+                "- #{} ({}){}{}{}",
                 frame.index,
                 format_clock(frame.at_ms),
                 if action.is_empty() {
@@ -193,7 +198,8 @@ pub fn build_handoff_summary(
                 } else {
                     format!(" [{action}]")
                 },
-                said
+                said,
+                cue
             );
             if let Some(docs) = docs_for_frame(frame, docs_refs) {
                 let _ = match &docs.url {

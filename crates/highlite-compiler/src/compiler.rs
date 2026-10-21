@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use serde_json::Value;
 
 use crate::alignment::{AlignmentTarget, align_transcript};
+use crate::cues::{SpeechCue, detect_speech_cues, weak_window_ms};
 use crate::model::{
     COMPILER_NAME, COMPILER_SCHEMA_VERSION, COMPILER_VERSION, CaptureAnalysis, CompileInput,
     CompileOptions, CompileProvenance, CompiledBundle, CompiledKeyframe, CompilerInfo, DocsRef,
@@ -14,6 +15,8 @@ use crate::summary::build_handoff_summary;
 const DEFAULT_MIN_GAP_MS: u64 = 500;
 const DEFAULT_CLAUSE_GAP_MS: u64 = 1_500;
 const DEFAULT_CROP_PADDING_PX: f64 = 24.0;
+const DEFAULT_CUE_WINDOW_MS: u64 = 1_200;
+const MIN_CROP_FRACTION: f64 = 0.4;
 const MAX_KEYFRAME_CAP: usize = 24;
 const EVENT_MATCH_MS: u64 = 1_200;
 const COVERAGE_GAP_MS: u64 = 35_000;
@@ -42,6 +45,7 @@ struct Candidate {
     score: i32,
     score_reasons: Vec<String>,
     pinned: bool,
+    cue: Option<SpeechCue>,
 }
 
 struct NormalizedOptions {
@@ -51,6 +55,8 @@ struct NormalizedOptions {
     crop_padding_px: f64,
     crop: bool,
     coverage: bool,
+    speech_cues: bool,
+    cue_window_ms: u64,
     compiled_at: String,
 }
 
@@ -106,10 +112,22 @@ fn normalize_options(
         .max(0.0),
         crop: options.and_then(|options| options.crop).unwrap_or(true),
         coverage: options.and_then(|options| options.coverage).unwrap_or(true),
+        speech_cues: options
+            .and_then(|options| options.speech_cues)
+            .unwrap_or(true),
+        cue_window_ms: options
+            .and_then(|options| options.cue_window_ms)
+            .unwrap_or(DEFAULT_CUE_WINDOW_MS)
+            .max(1),
         compiled_at: options
             .and_then(|options| options.compiled_at.clone())
             .unwrap_or_else(|| manifest.created_at.clone()),
     }
+}
+
+fn format_clock(ms: u64) -> String {
+    let total_seconds = ms / 1_000;
+    format!("{}:{:02}", total_seconds / 60, total_seconds % 60)
 }
 
 fn unique_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -184,7 +202,35 @@ fn base_score(reason: KeyframeReason) -> i32 {
     }
 }
 
-fn build_candidates(manifest: &HighliteManifest, frames: &[FrameCandidate]) -> Vec<Candidate> {
+fn nearest_cue(
+    cues: &[SpeechCue],
+    at_ms: u64,
+    strong_window_ms: u64,
+    allow_weak: bool,
+) -> Option<(SpeechCue, u64)> {
+    let weak_window = weak_window_ms(strong_window_ms);
+    cues.iter()
+        .filter_map(|cue| {
+            if !cue.strong && !allow_weak {
+                return None;
+            }
+            let window = if cue.strong {
+                strong_window_ms
+            } else {
+                weak_window
+            };
+            let distance = cue.at_ms.abs_diff(at_ms);
+            (distance <= window).then(|| (cue.clone(), distance))
+        })
+        .min_by_key(|(cue, distance)| (*distance, u8::from(!cue.strong)))
+}
+
+fn build_candidates(
+    manifest: &HighliteManifest,
+    frames: &[FrameCandidate],
+    cues: &[SpeechCue],
+    options: &NormalizedOptions,
+) -> Vec<Candidate> {
     frames
         .iter()
         .map(|frame| {
@@ -236,6 +282,29 @@ fn build_candidates(manifest: &HighliteManifest, frames: &[FrameCandidate]) -> V
                 }
             }
 
+            let allow_weak = matches!(
+                reason,
+                KeyframeReason::Mark | KeyframeReason::Annotation | KeyframeReason::VisualChange
+            );
+            let cue = options
+                .speech_cues
+                .then(|| {
+                    nearest_cue(
+                        cues,
+                        frame.keyframe.at_ms,
+                        options.cue_window_ms,
+                        allow_weak,
+                    )
+                })
+                .flatten()
+                .map(|(cue, _)| cue);
+            if let Some(cue) = &cue {
+                if cue.strong {
+                    score += 24;
+                }
+                score_reasons.push(format!("cue:{}", cue.word));
+            }
+
             Candidate {
                 reason,
                 target_id,
@@ -245,7 +314,9 @@ fn build_candidates(manifest: &HighliteManifest, frames: &[FrameCandidate]) -> V
                     .map_or(frame.keyframe.at_ms, |event| event.at_ms),
                 score,
                 score_reasons,
-                pinned: matches!(reason, KeyframeReason::Mark | KeyframeReason::Annotation),
+                pinned: matches!(reason, KeyframeReason::Mark | KeyframeReason::Annotation)
+                    || cue.as_ref().is_some_and(|cue| cue.strong),
+                cue,
                 frame: frame.clone(),
             }
         })
@@ -289,6 +360,7 @@ fn merge_candidates(left: Candidate, right: Candidate) -> Candidate {
         annotation_id: loser_annotation,
         score_reasons: loser_reasons,
         pinned: loser_pinned,
+        cue: loser_cue,
         ..
     } = loser;
 
@@ -320,6 +392,14 @@ fn merge_candidates(left: Candidate, right: Candidate) -> Candidate {
     merged.target_id = merged.target_id.or(loser_target);
     merged.annotation_id = merged.annotation_id.or(loser_annotation);
     merged.pinned = merged.pinned || loser_pinned;
+    let preferred_cue = match (&merged.cue, &loser_cue) {
+        (None, Some(_)) => loser_cue.clone(),
+        (Some(current), Some(loser)) if loser.strong && !current.strong => loser_cue.clone(),
+        _ => None,
+    };
+    if preferred_cue.is_some() {
+        merged.cue = preferred_cue;
+    }
     merged
 }
 
@@ -496,6 +576,26 @@ fn clamp(value: f64, min: f64, max: f64) -> f64 {
     value.min(max).max(min)
 }
 
+/// Grow a tight crop around its center so a single small element still carries
+/// enough context to be readable in the bundle.
+fn expand_span(start: f64, end: f64, minimum: f64, maximum: f64) -> (f64, f64) {
+    if end - start >= minimum {
+        return (start, end);
+    }
+    let center = (start + end) / 2.0;
+    let mut start = center - minimum / 2.0;
+    let mut end = center + minimum / 2.0;
+    if start < 0.0 {
+        end -= start;
+        start = 0.0;
+    }
+    if end > maximum {
+        start -= end - maximum;
+        end = maximum;
+    }
+    (start.max(0.0), end.min(maximum))
+}
+
 fn crop_for(
     candidate: &Candidate,
     manifest: &HighliteManifest,
@@ -559,6 +659,8 @@ fn crop_for(
     let y0 = clamp(rect.y - padding_px, 0.0, height);
     let x1 = clamp(rect.x + rect.width + padding_px, 0.0, width);
     let y1 = clamp(rect.y + rect.height + padding_px, 0.0, height);
+    let (x0, x1) = expand_span(x0, x1, width * MIN_CROP_FRACTION, width);
+    let (y0, y1) = expand_span(y0, y1, height * MIN_CROP_FRACTION, height);
     if x1 <= x0 || y1 <= y0 {
         return None;
     }
@@ -764,7 +866,29 @@ pub fn compile_capture_with(
         warnings.add("No frame candidates were supplied, so the bundle has no visual evidence.");
     }
 
-    let candidates = dedupe_candidates(build_candidates(manifest, &frames), options.min_gap_ms);
+    let cues = if options.speech_cues {
+        detect_speech_cues(manifest)
+    } else {
+        Vec::new()
+    };
+    if options.speech_cues {
+        for cue in cues.iter().filter(|cue| cue.strong) {
+            let nearby = frames
+                .iter()
+                .any(|frame| frame.keyframe.at_ms.abs_diff(cue.at_ms) <= options.cue_window_ms);
+            if !nearby {
+                warnings.add(format!(
+                    "Speech cue “{}” at {} had no captured frame nearby, so it could not become a keyframe.",
+                    cue.word,
+                    format_clock(cue.at_ms)
+                ));
+            }
+        }
+    }
+    let candidates = dedupe_candidates(
+        build_candidates(manifest, &frames, &cues, &options),
+        options.min_gap_ms,
+    );
     let selected = select_candidates(candidates, &options, manifest.duration_ms, &mut warnings);
     let alignment_targets: Vec<AlignmentTarget> = selected
         .iter()
@@ -797,6 +921,7 @@ pub fn compile_capture_with(
                 annotation_ids: candidate.frame.keyframe.annotation_ids.clone(),
                 transcript_segment_ids: alignment.transcript_segment_ids,
                 said: alignment.said,
+                cue: candidate.cue.as_ref().map(|cue| cue.word.clone()),
                 score: candidate.score,
                 score_reasons: candidate.score_reasons.clone(),
                 crop,
@@ -867,6 +992,8 @@ pub fn compile_capture_with(
                 clause_gap_ms: options.clause_gap_ms,
                 crop: options.crop,
                 coverage: options.coverage,
+                speech_cues: options.speech_cues,
+                cue_window_ms: options.cue_window_ms,
             },
         },
     }
