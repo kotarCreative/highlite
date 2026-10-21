@@ -45,6 +45,21 @@ The bundle contains `summary.md`, `contact-sheet.png`, `frames/frame-XX.png`,
 `--transcribe off` when the manifest already has a transcript. See the
 [compiler README](crates/highlite-compiler/README.md) for backends and options.
 
+### macOS setup
+
+On Apple Silicon, the setup script installs the missing Homebrew/Rust prerequisites,
+builds the SDK and compiler, downloads `parakeet-cli` and an English Parakeet model,
+and optionally runs the real ASR e2e:
+
+```sh
+bash scripts/setup-macos.sh --install-prereqs --verify
+```
+
+Use `--model 0.6b` for the larger `tdt-0.6b-v2` model, `--skip-build` to reuse existing
+builds, and `--force` to re-download the engine/model. Homebrew and the Xcode command
+line tools must already be installed; the script prints the Homebrew command if it is
+missing. Downloads are cached under `~/.cache/highlite/parakeet`.
+
 ### Parakeet e2e
 
 `pnpm test:parakeet` runs a real Parakeet model through the whole pipeline:

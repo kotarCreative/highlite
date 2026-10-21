@@ -14,6 +14,7 @@
     "test:e2e": "pnpm build && node scripts/browser-smoke.mjs && pnpm build:rust && node scripts/compiler-e2e.mjs",
     "test:compiler:e2e": "pnpm build && pnpm build:rust && node scripts/compiler-e2e.mjs",
     "test:parakeet": "pnpm build:rust && node scripts/parakeet-e2e.mjs",
+    "setup:macos": "bash scripts/setup-macos.sh",
     "rust:fmt": "cargo fmt --all -- --check",
     "rust:lint": "cargo clippy --workspace --all-targets -- -D warnings",
     "rust:test": "cargo test --workspace",

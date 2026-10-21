@@ -179,7 +179,8 @@ full directory pipeline, including rendered PNGs and a transcribed capture.
 A real engine is covered separately by the opt-in
 [`scripts/parakeet-e2e.mjs`](../../scripts/parakeet-e2e.mjs). It runs `ffmpeg` and
 `parakeet-cli` against a speech fixture through `bundle`, then checks the transcript,
-timings, summary, frames and contact sheet:
+timings, summary, frames and contact sheet. On macOS,
+`bash scripts/setup-macos.sh --install-prereqs --verify` installs and runs it:
 
 ```sh
 HIGHLITE_PARAKEET_BIN=/path/to/parakeet-cli \
