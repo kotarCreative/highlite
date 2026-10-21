@@ -47,6 +47,7 @@ export interface Annotation {
 }
 
 export interface TranscriptSegment {
+  id?: string;
   startMs: number;
   endMs: number;
   text: string;
@@ -68,6 +69,7 @@ export interface HighliteManifest {
   sessionId: string;
   createdAt: string;
   page: { initialUrl: string; title: string };
+  viewport?: ViewportRect;
   durationMs: number;
   timeline: TimelineEvent[];
   targets: Target[];
@@ -137,7 +139,7 @@ export class SessionTimeline {
   }
 
   now(): number {
-    return Math.max(0, this.#clock.now() - this.#origin);
+    return Math.max(0, Math.round(this.#clock.now() - this.#origin));
   }
 
   record(

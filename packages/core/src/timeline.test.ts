@@ -26,6 +26,18 @@ describe('SessionTimeline', () => {
     expect(timeline.snapshot()).toHaveLength(2);
   });
 
+  it('rounds monotonic time to whole milliseconds for the compiler contract', () => {
+    let time = 100;
+    const timeline = new SessionTimeline({
+      clock: { now: () => time },
+      createId: () => 'event-0',
+    });
+
+    time = 125.6;
+    expect(timeline.now()).toBe(26);
+    expect(timeline.record('mark').atMs).toBe(26);
+  });
+
   it('does not return its mutable event payloads from snapshots', () => {
     const timeline = new SessionTimeline({
       clock: { now: () => 0 },

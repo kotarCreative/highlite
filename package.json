@@ -11,8 +11,14 @@
     "lint": "oxlint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "pnpm build && node scripts/browser-smoke.mjs",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
+    "test:e2e": "pnpm build && node scripts/browser-smoke.mjs && pnpm build:rust && node scripts/compiler-e2e.mjs",
+    "test:compiler:e2e": "pnpm build && pnpm build:rust && node scripts/compiler-e2e.mjs",
+    "rust:fmt": "cargo fmt --all -- --check",
+    "rust:lint": "cargo clippy --workspace --all-targets -- -D warnings",
+    "rust:test": "cargo test --workspace",
+    "check:rust": "pnpm rust:fmt && pnpm rust:lint && pnpm rust:test",
+    "build:rust": "cargo build --workspace --release",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:rust"
   },
   "devDependencies": {
     "esbuild": "^0.27.0",

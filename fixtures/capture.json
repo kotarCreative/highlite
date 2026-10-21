@@ -1,0 +1,319 @@
+{
+  "manifest": {
+    "schemaVersion": "0.1.0",
+    "sessionId": "session-1",
+    "createdAt": "2026-10-20T12:00:00.000Z",
+    "page": {
+      "initialUrl": "https://app.example.com/analytics",
+      "title": "Analytics"
+    },
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "width": 1000,
+      "height": 800
+    },
+    "durationMs": 60000,
+    "timeline": [
+      {
+        "id": "event-target",
+        "seq": 0,
+        "atMs": 4000,
+        "kind": "target",
+        "targetId": "t1",
+        "payload": {
+          "role": "button",
+          "tag": "button"
+        }
+      },
+      {
+        "id": "event-click",
+        "seq": 1,
+        "atMs": 4100,
+        "kind": "click",
+        "targetId": "t1",
+        "payload": {
+          "button": 0,
+          "x": 100,
+          "y": 200
+        }
+      },
+      {
+        "id": "event-mark",
+        "seq": 2,
+        "atMs": 12000,
+        "kind": "mark",
+        "targetId": "t2",
+        "payload": {
+          "label": "Retention dropped"
+        }
+      },
+      {
+        "id": "event-annotation",
+        "seq": 3,
+        "atMs": 25000,
+        "kind": "annotation",
+        "targetId": "t2",
+        "payload": {
+          "annotationId": "a1",
+          "annotationKind": "circle",
+          "x": 300,
+          "y": 400
+        }
+      },
+      {
+        "id": "event-navigate",
+        "seq": 4,
+        "atMs": 40000,
+        "kind": "navigate",
+        "payload": {
+          "from": "https://app.example.com/analytics",
+          "to": "https://app.example.com/settings",
+          "source": "pushState"
+        }
+      }
+    ],
+    "targets": [
+      {
+        "id": "t1",
+        "tag": "button",
+        "role": "button",
+        "label": "Date range",
+        "selector": "#date-range",
+        "rect": {
+          "x": 80,
+          "y": 180,
+          "width": 160,
+          "height": 40
+        },
+        "pageUrl": "https://app.example.com/analytics",
+        "metadata": {
+          "docsId": "analytics.date-range",
+          "component": "DateRange"
+        }
+      },
+      {
+        "id": "t2",
+        "tag": "div",
+        "role": "img",
+        "label": "Retention metric",
+        "selector": "#retention",
+        "rect": {
+          "x": 200,
+          "y": 300,
+          "width": 400,
+          "height": 200
+        },
+        "pageUrl": "https://app.example.com/analytics",
+        "metadata": {
+          "docsId": "analytics.net-retention"
+        }
+      }
+    ],
+    "annotations": [
+      {
+        "id": "a1",
+        "atMs": 25000,
+        "kind": "circle",
+        "points": [
+          {
+            "x": 0.2,
+            "y": 0.3
+          },
+          {
+            "x": 0.4,
+            "y": 0.5
+          }
+        ],
+        "coordinateSpace": "viewport-normalized",
+        "targetId": "t2"
+      }
+    ],
+    "transcript": [
+      {
+        "id": "s1",
+        "startMs": 3000,
+        "endMs": 6000,
+        "text": "This is the filter that breaks the chart.",
+        "wordTimings": [
+          {
+            "startMs": 3000,
+            "endMs": 3375,
+            "text": "This"
+          },
+          {
+            "startMs": 3375,
+            "endMs": 3750,
+            "text": "is"
+          },
+          {
+            "startMs": 3750,
+            "endMs": 4125,
+            "text": "the"
+          },
+          {
+            "startMs": 4125,
+            "endMs": 4500,
+            "text": "filter"
+          },
+          {
+            "startMs": 4500,
+            "endMs": 4875,
+            "text": "that"
+          },
+          {
+            "startMs": 4875,
+            "endMs": 5250,
+            "text": "breaks"
+          },
+          {
+            "startMs": 5250,
+            "endMs": 5625,
+            "text": "the"
+          },
+          {
+            "startMs": 5625,
+            "endMs": 6000,
+            "text": "chart."
+          }
+        ]
+      },
+      {
+        "id": "s2",
+        "startMs": 10000,
+        "endMs": 14000,
+        "text": "And here the retention number drops.",
+        "wordTimings": [
+          {
+            "startMs": 10000,
+            "endMs": 10667,
+            "text": "And"
+          },
+          {
+            "startMs": 10667,
+            "endMs": 11333,
+            "text": "here"
+          },
+          {
+            "startMs": 11333,
+            "endMs": 12000,
+            "text": "the"
+          },
+          {
+            "startMs": 12000,
+            "endMs": 12667,
+            "text": "retention"
+          },
+          {
+            "startMs": 12667,
+            "endMs": 13333,
+            "text": "number"
+          },
+          {
+            "startMs": 13333,
+            "endMs": 14000,
+            "text": "drops."
+          }
+        ]
+      },
+      {
+        "id": "s3",
+        "startMs": 23000,
+        "endMs": 27000,
+        "text": "I am circling the number that moved.",
+        "wordTimings": [
+          {
+            "startMs": 23000,
+            "endMs": 23571,
+            "text": "I"
+          },
+          {
+            "startMs": 23571,
+            "endMs": 24143,
+            "text": "am"
+          },
+          {
+            "startMs": 24143,
+            "endMs": 24714,
+            "text": "circling"
+          },
+          {
+            "startMs": 24714,
+            "endMs": 25286,
+            "text": "the"
+          },
+          {
+            "startMs": 25286,
+            "endMs": 25857,
+            "text": "number"
+          },
+          {
+            "startMs": 25857,
+            "endMs": 26429,
+            "text": "that"
+          },
+          {
+            "startMs": 26429,
+            "endMs": 27000,
+            "text": "moved."
+          }
+        ]
+      }
+    ],
+    "keyframes": [
+      {
+        "id": "f1",
+        "atMs": 4100,
+        "imagePath": "frames/f1.png",
+        "targetIds": ["t1"],
+        "annotationIds": [],
+        "transcriptSegmentIds": [],
+        "reason": "interaction"
+      },
+      {
+        "id": "f2",
+        "atMs": 4500,
+        "imagePath": "frames/f2.png",
+        "targetIds": ["t1"],
+        "annotationIds": [],
+        "transcriptSegmentIds": [],
+        "reason": "interaction"
+      },
+      {
+        "id": "f3",
+        "atMs": 12000,
+        "imagePath": "frames/f3.png",
+        "targetIds": ["t2"],
+        "annotationIds": [],
+        "transcriptSegmentIds": [],
+        "reason": "mark"
+      },
+      {
+        "id": "f4",
+        "atMs": 25100,
+        "imagePath": "frames/f4.png",
+        "targetIds": ["t2"],
+        "annotationIds": ["a1"],
+        "transcriptSegmentIds": [],
+        "reason": "annotation"
+      },
+      {
+        "id": "f5",
+        "atMs": 40400,
+        "imagePath": "frames/f5.png",
+        "targetIds": [],
+        "annotationIds": [],
+        "transcriptSegmentIds": [],
+        "reason": "interaction"
+      }
+    ],
+    "artifacts": {},
+    "captureWarnings": []
+  },
+  "viewport": {
+    "x": 0,
+    "y": 0,
+    "width": 1000,
+    "height": 800
+  }
+}

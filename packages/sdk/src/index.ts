@@ -181,6 +181,7 @@ class Highlite implements HighliteController {
   #lastUrl = '';
   #routeUnsubscribe: (() => void) | undefined;
   #initialPage: HighliteManifest['page'] | undefined;
+  #initialViewport: HighliteManifest['viewport'] | undefined;
   #createdAt = '';
   #frameAvailable = false;
   #nextKeyframeOrder = 0;
@@ -234,6 +235,12 @@ class Highlite implements HighliteController {
     );
     this.#lastUrl = this.#safeUrl(location.href);
     this.#initialPage = { initialUrl: this.#lastUrl, title: textExcerpt(document.title) ?? '' };
+    this.#initialViewport = {
+      x: 0,
+      y: 0,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
     this.#createdAt = new Date().toISOString();
     this.#toolbar?.setStarting();
     this.#startPromise = this.#beginCapture();
@@ -272,6 +279,12 @@ class Highlite implements HighliteController {
       sessionId: this.#sessionId,
       createdAt: this.#createdAt,
       page: this.#initialPage ?? { initialUrl: this.#safeUrl(location.href), title: '' },
+      viewport: this.#initialViewport ?? {
+        x: 0,
+        y: 0,
+        width: window.innerWidth,
+        height: window.innerHeight,
+      },
       durationMs,
       timeline: this.#timeline.snapshot(),
       targets: [...this.#targets.values()],

@@ -4,16 +4,25 @@ Highlite is an embeddable browser SDK for capturing narrated, visually contextua
 
 ## Status
 
-The repository is being built in milestones. The current slice includes the typed timeline, a floating Shadow DOM toolbar, microphone and permission-based frame capture, click/scroll/SPA-route context, DOM targets, four annotation tools, deterministic Markdown, ZIP export, and an interactive analytics demo. Transcription, server processing, contact sheets, and automatic frame scoring are not implemented yet. See [the implementation notes](docs/implementation-notes.md) for browser constraints and progress.
+The repository is being built in milestones. The current slice includes the typed timeline, a floating Shadow DOM toolbar, microphone and permission-based frame capture, click/scroll/SPA-route context, DOM targets, four annotation tools, deterministic Markdown, ZIP export, and an interactive analytics demo. The canonical compiler is the pure Rust crate [`crates/highlite-compiler`](crates/highlite-compiler); it selects keyframes, aligns narration by clause, plans DOM-target crops, emits an agent handoff summary, and exposes a JSON stdin/stdout CLI. It is checked against shared golden fixtures in [`fixtures/`](fixtures). Transcription, image rendering, server processing, contact sheets, and automatic frame scoring are not implemented yet. See [the implementation notes](docs/implementation-notes.md) for browser constraints and progress.
 
 ## Development
 
-Requires Node.js 22 or newer and pnpm 12. Install dependencies with `pnpm install`. The `prepare` script configures the local Git hooks.
+Requires Node.js 22 or newer, pnpm 12, and a Rust toolchain with Cargo. Install dependencies with `pnpm install`. The `prepare` script configures the local Git hooks.
 
 - `pnpm dev` — build workspace packages and start the demo
-- `pnpm check` — formatting, lint, typecheck, and tests
+- `pnpm check` — formatting, lint, typecheck, tests, and Rust checks
 - `pnpm build` — build workspace packages in dependency order
-- `pnpm test:e2e` — build and run the Chromium browser smoke test (`CHROMIUM_PATH` can override `/usr/bin/chromium`)
+- `pnpm build:rust` — build the compiler CLI in release mode
+- `pnpm test:e2e` — build and run the browser smoke test, then the SDK → Rust compiler e2e (`CHROMIUM_PATH` can override `/usr/bin/chromium`)
+- `pnpm test:compiler:e2e` — build the SDK and compiler, then compile a real browser capture through the Rust CLI
+
+The compiler CLI reads a `CompileInput` JSON object on stdin:
+
+```sh
+cargo run -p highlite-compiler -- compile --pretty < fixtures/capture.json
+cargo run -p highlite-compiler -- scrawl --pretty < fixtures/capture.json
+```
 
 ## Embed
 

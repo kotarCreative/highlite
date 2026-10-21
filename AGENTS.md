@@ -13,4 +13,5 @@
 - Keep the browser SDK framework-agnostic and avoid collecting sensitive form data.
 - Never claim upstream Scrawl compatibility until its actual schema, license, and processing interfaces are validated.
 - Keep browser APIs behind small interfaces where practical so capture behavior can be tested.
+- Treat `crates/highlite-compiler` as the canonical compiler. Keep `fixtures/` and the golden tests in sync with contract changes.
 - Run `pnpm check` before committing.
