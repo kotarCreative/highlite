@@ -6,6 +6,8 @@ use serde_json::Value;
 pub const COMPILER_SCHEMA_VERSION: &str = "0.1.0";
 pub const COMPILER_NAME: &str = "highlite-compiler";
 pub const COMPILER_VERSION: &str = "0.1.0";
+/// Used when a capture records a fade start but not an animation duration.
+pub const DEFAULT_ANNOTATION_FADE_MS: u64 = 400;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -108,8 +110,38 @@ pub struct Annotation {
     pub kind: AnnotationKind,
     pub points: Vec<Point>,
     pub coordinate_space: CoordinateSpace,
+    /// Stroke width in CSS pixels, as drawn in the capturing viewport. Lets the
+    /// renderer reproduce the original line weight instead of guessing from the image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke_width: Option<f64>,
+    /// How long the annotation stays fully opaque before fading, in milliseconds.
+    /// `None` keeps the legacy behaviour of no time-based fade.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_after_ms: Option<u64>,
+    /// How long the fade animation takes, in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_id: Option<String>,
+}
+
+impl Annotation {
+    /// Opacity of this annotation at `at_ms`, including its fade-out window.
+    pub fn opacity_at(&self, at_ms: u64) -> f64 {
+        let Some(fade_after_ms) = self.fade_after_ms else {
+            return 1.0;
+        };
+        let fade_start = self.at_ms.saturating_add(fade_after_ms);
+        if at_ms <= fade_start {
+            return 1.0;
+        }
+        let duration = self.fade_duration_ms.unwrap_or(DEFAULT_ANNOTATION_FADE_MS);
+        if duration == 0 {
+            return 0.0;
+        }
+        let elapsed = at_ms - fade_start;
+        (1.0 - elapsed as f64 / duration as f64).clamp(0.0, 1.0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

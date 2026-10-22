@@ -1,4 +1,13 @@
 import type { Annotation, AnnotationKind } from '@highlite/core';
+import {
+  ANNOTATION_ARROW_HEAD,
+  ANNOTATION_FADE_AFTER_MS,
+  ANNOTATION_LINE_WIDTH,
+  annotationOpacity,
+  appendPointerSamples,
+  pointerSamples,
+  type NormalizedPoint,
+} from './annotation';
 
 export interface PermissionRequest {
   kind: 'microphone' | 'display';
@@ -99,9 +108,12 @@ export class CaptureToolbar {
   readonly #permissionClose: HTMLButtonElement;
   readonly #options: ToolbarOptions;
   readonly #annotations: Annotation[] = [];
+  readonly #annotationAddedAt = new Map<string, number>();
+  #fadeTimer: number | undefined;
+  #fadeFrame: number | undefined;
   #drawing = false;
   #annotating = false;
-  #draft: Annotation['points'] = [];
+  #draft: NormalizedPoint[] = [];
   #annotationKind: AnnotationKind = 'freehand';
   #pixelRatio = 1;
   #disposed = false;
@@ -385,17 +397,22 @@ export class CaptureToolbar {
 
   addAnnotation(annotation: Annotation): void {
     this.#annotations.push(annotation);
+    this.#annotationAddedAt.set(annotation.id, performance.now());
+    this.#scheduleFade();
     this.#draw();
   }
 
   clearAnnotations(): void {
     this.#annotations.length = 0;
+    this.#annotationAddedAt.clear();
+    this.#cancelFade();
     this.#draw();
   }
 
   destroy(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#cancelFade();
     this.dismissPermission();
     window.removeEventListener('resize', this.#resizeCanvas);
     this.#host.remove();
@@ -505,7 +522,7 @@ export class CaptureToolbar {
     event.preventDefault();
     event.stopPropagation();
     this.#drawing = true;
-    this.#draft = [this.#normalizedPoint(event.clientX, event.clientY)];
+    this.#draft = pointerSamples(event, window.innerWidth, window.innerHeight);
     this.#canvas.setPointerCapture(event.pointerId);
     this.#draw();
   };
@@ -514,7 +531,7 @@ export class CaptureToolbar {
     if (!this.#drawing) return;
     event.preventDefault();
     event.stopPropagation();
-    this.#draft.push(this.#normalizedPoint(event.clientX, event.clientY));
+    appendPointerSamples(this.#draft, event, window.innerWidth, window.innerHeight);
     this.#draw();
   };
 
@@ -522,7 +539,7 @@ export class CaptureToolbar {
     if (!this.#drawing) return;
     event.preventDefault();
     event.stopPropagation();
-    this.#draft.push(this.#normalizedPoint(event.clientX, event.clientY));
+    appendPointerSamples(this.#draft, event, window.innerWidth, window.innerHeight);
     this.#drawing = false;
     this.#canvas.releasePointerCapture(event.pointerId);
     this.#draw();
@@ -550,22 +567,77 @@ export class CaptureToolbar {
     this.#draw();
   };
 
-  #normalizedPoint(clientX: number, clientY: number): { x: number; y: number } {
-    return {
-      x: Math.max(0, Math.min(1, clientX / Math.max(1, window.innerWidth))),
-      y: Math.max(0, Math.min(1, clientY / Math.max(1, window.innerHeight))),
-    };
-  }
-
-  #draw(): void {
+  #draw(now = performance.now()): void {
     const context = this.#context;
     context.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    for (const annotation of this.#annotations)
-      this.#drawAnnotation(annotation.kind, annotation.points);
-    if (this.#drawing) this.#drawAnnotation(this.#annotationKind, this.#draft);
+    for (const annotation of this.#annotations) {
+      const start = this.#annotationAddedAt.get(annotation.id) ?? now;
+      const opacity = annotationOpacity(now - start);
+      if (opacity > 0) this.#drawAnnotation(annotation.kind, annotation.points, opacity);
+    }
+    if (this.#drawing) this.#drawAnnotation(this.#annotationKind, this.#draft, 1);
   }
 
-  #drawAnnotation(kind: AnnotationKind, points: Annotation['points']): void {
+  #scheduleFade(): void {
+    if (this.#disposed || this.#fadeTimer !== undefined || this.#fadeFrame !== undefined) return;
+    if (this.#annotations.length === 0) return;
+
+    const now = performance.now();
+    let wait = Number.POSITIVE_INFINITY;
+    for (const annotation of this.#annotations) {
+      const start = this.#annotationAddedAt.get(annotation.id) ?? now;
+      wait = Math.min(wait, Math.max(0, start + ANNOTATION_FADE_AFTER_MS - now));
+    }
+    if (!Number.isFinite(wait)) return;
+    this.#fadeTimer = window.setTimeout(() => {
+      this.#fadeTimer = undefined;
+      this.#startFadeFrame();
+    }, wait);
+  }
+
+  #startFadeFrame(): void {
+    if (this.#disposed || this.#fadeFrame !== undefined) return;
+    const step = (): void => {
+      this.#fadeFrame = undefined;
+      if (this.#disposed) return;
+      const now = performance.now();
+      this.#draw(now);
+      this.#pruneExpired(now);
+      const fading = this.#annotations.some((annotation) => {
+        const start = this.#annotationAddedAt.get(annotation.id) ?? now;
+        return annotationOpacity(now - start) < 1;
+      });
+      if (fading) {
+        this.#fadeFrame = window.requestAnimationFrame(step);
+      } else if (this.#annotations.length > 0) {
+        this.#scheduleFade();
+      }
+    };
+    this.#fadeFrame = window.requestAnimationFrame(step);
+  }
+
+  #pruneExpired(now: number): void {
+    for (let index = this.#annotations.length - 1; index >= 0; index -= 1) {
+      const annotation = this.#annotations[index]!;
+      const start = this.#annotationAddedAt.get(annotation.id) ?? now;
+      if (annotationOpacity(now - start) > 0) continue;
+      this.#annotations.splice(index, 1);
+      this.#annotationAddedAt.delete(annotation.id);
+    }
+  }
+
+  #cancelFade(): void {
+    if (this.#fadeTimer !== undefined) {
+      window.clearTimeout(this.#fadeTimer);
+      this.#fadeTimer = undefined;
+    }
+    if (this.#fadeFrame !== undefined) {
+      window.cancelAnimationFrame(this.#fadeFrame);
+      this.#fadeFrame = undefined;
+    }
+  }
+
+  #drawAnnotation(kind: AnnotationKind, points: Annotation['points'], opacity = 1): void {
     if (points.length < 2) return;
     const context = this.#context;
     const width = window.innerWidth;
@@ -574,9 +646,10 @@ export class CaptureToolbar {
     const first = pixels[0]!;
     const last = pixels.at(-1)!;
     context.save();
+    context.globalAlpha = opacity;
     context.strokeStyle = '#ff3b5c';
     context.fillStyle = 'rgba(255, 214, 10, .24)';
-    context.lineWidth = 4;
+    context.lineWidth = ANNOTATION_LINE_WIDTH;
     context.lineCap = 'round';
     context.lineJoin = 'round';
 
@@ -608,13 +681,13 @@ export class CaptureToolbar {
       context.moveTo(first.x, first.y);
       context.lineTo(last.x, last.y);
       context.lineTo(
-        last.x - 14 * Math.cos(angle - Math.PI / 6),
-        last.y - 14 * Math.sin(angle - Math.PI / 6),
+        last.x - ANNOTATION_ARROW_HEAD * Math.cos(angle - Math.PI / 6),
+        last.y - ANNOTATION_ARROW_HEAD * Math.sin(angle - Math.PI / 6),
       );
       context.moveTo(last.x, last.y);
       context.lineTo(
-        last.x - 14 * Math.cos(angle + Math.PI / 6),
-        last.y - 14 * Math.sin(angle + Math.PI / 6),
+        last.x - ANNOTATION_ARROW_HEAD * Math.cos(angle + Math.PI / 6),
+        last.y - ANNOTATION_ARROW_HEAD * Math.sin(angle + Math.PI / 6),
       );
       context.stroke();
     }

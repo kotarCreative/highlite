@@ -11,6 +11,11 @@ import {
   type Processor,
   type Target,
 } from '@highlite/core';
+import {
+  ANNOTATION_FADE_AFTER_MS,
+  ANNOTATION_FADE_DURATION_MS,
+  ANNOTATION_LINE_WIDTH,
+} from './annotation';
 import { DisplayMediaFrameProvider } from './frame-provider';
 import { CaptureToolbar, type PermissionDecision, type PermissionRequest } from './toolbar';
 
@@ -726,6 +731,9 @@ class Highlite implements HighliteController {
       kind,
       points,
       coordinateSpace: 'viewport-normalized',
+      strokeWidth: ANNOTATION_LINE_WIDTH,
+      fadeAfterMs: ANNOTATION_FADE_AFTER_MS,
+      fadeDurationMs: ANNOTATION_FADE_DURATION_MS,
       ...(target ? { targetId: target.id } : {}),
     };
     this.#annotations.push(annotation);
@@ -915,6 +923,9 @@ class Highlite implements HighliteController {
     const previousUrl = this.#lastUrl;
     this.#lastUrl = nextUrl;
     this.#timeline.record('navigate', { from: previousUrl, to: nextUrl, source });
+    // Annotations are viewport coordinates on the page they were drawn on; a route
+    // change makes them stale, just like scrolling does.
+    this.#toolbar?.clearAnnotations();
     if (this.#isDisabledRoute(location.pathname)) {
       this.#addWarning('Capture stopped because the browser navigated to a disabled route.');
       void this.cancel();

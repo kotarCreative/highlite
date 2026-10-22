@@ -127,6 +127,9 @@
           }
         ],
         "coordinateSpace": "viewport-normalized",
+        "strokeWidth": 4,
+        "fadeAfterMs": 4000,
+        "fadeDurationMs": 400,
         "targetId": "t2"
       }
     ],
@@ -361,9 +364,9 @@
       "score": 116,
       "scoreReasons": ["reason:annotation", "target", "annotation", "event:annotation"],
       "crop": {
-        "x": 0.1,
-        "y": 0.2,
-        "width": 0.4,
+        "x": 0.176,
+        "y": 0.2625,
+        "width": 0.448,
         "height": 0.4
       }
     },
@@ -618,9 +621,9 @@
         "score": 116,
         "scoreReasons": ["reason:annotation", "target", "annotation", "event:annotation"],
         "crop": {
-          "x": 0.1,
-          "y": 0.2,
-          "width": 0.4,
+          "x": 0.176,
+          "y": 0.2625,
+          "width": 0.448,
           "height": 0.4
         }
       },
@@ -690,6 +693,9 @@
           }
         ],
         "coordinateSpace": "viewport-normalized",
+        "strokeWidth": 4,
+        "fadeAfterMs": 4000,
+        "fadeDurationMs": 400,
         "targetId": "t2"
       }
     ],

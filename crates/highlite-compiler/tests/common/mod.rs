@@ -158,6 +158,9 @@ pub fn make_manifest() -> HighliteManifest {
             kind: AnnotationKind::Circle,
             points: vec![Point { x: 0.2, y: 0.3 }, Point { x: 0.4, y: 0.5 }],
             coordinate_space: CoordinateSpace::ViewportNormalized,
+            stroke_width: Some(4.0),
+            fade_after_ms: None,
+            fade_duration_ms: None,
             target_id: Some("t2".to_owned()),
         }],
         transcript: vec![

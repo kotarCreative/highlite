@@ -80,7 +80,25 @@ try {
     steps: 5,
   });
   await page.mouse.up();
+  const countInkPixels = () =>
+    page.locator('canvas').evaluate((element) => {
+      const context = element.getContext('2d');
+      if (!context) return 0;
+      const { data } = context.getImageData(0, 0, element.width, element.height);
+      let ink = 0;
+      for (let index = 3; index < data.length; index += 4) {
+        if (data[index] > 0) ink += 1;
+      }
+      return ink;
+    });
+  assert.ok((await countInkPixels()) > 0, 'The annotation must be visible when drawn.');
   await page.getByRole('button', { name: 'Return to interact mode' }).click();
+  await page.waitForTimeout(4_500);
+  assert.equal(
+    await countInkPixels(),
+    0,
+    'Annotations must fade off the overlay after four seconds.',
+  );
 
   await page.locator('.metric-card.featured').click();
   await page.locator('#date-range').click();
@@ -99,7 +117,12 @@ try {
     manifest.timeline.some((event) => event.kind === 'mark'),
     'Marks must be in the timeline.',
   );
-  assert.ok(manifest.annotations.some((annotation) => annotation.kind === 'circle'));
+  const annotation = manifest.annotations.find((entry) => entry.kind === 'circle');
+  assert.ok(annotation, 'The circle annotation must be in the manifest.');
+  assert.equal(annotation.strokeWidth, 4, 'Annotations must record their CSS stroke width.');
+  assert.equal(annotation.fadeAfterMs, 4_000, 'Annotations must record the fade delay.');
+  assert.equal(annotation.fadeDurationMs, 400, 'Annotations must record the fade duration.');
+  assert.ok(annotation.points.length >= 2, 'Annotations must keep the drawn points.');
   assert.ok(manifest.targets.some((target) => target.metadata?.id === 'metric.net-retention'));
   assert.ok(manifest.targets.some((target) => target.metadata?.id === 'filter.date-range'));
   assert.equal(

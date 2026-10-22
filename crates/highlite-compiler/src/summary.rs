@@ -70,12 +70,16 @@ fn describe_frame(frame: &CompiledKeyframe, manifest: &HighliteManifest) -> Stri
         .target_ids
         .iter()
         .find_map(|id| manifest.targets.iter().find(|target| &target.id == id));
-    let annotation: Option<&Annotation> = frame.annotation_ids.iter().find_map(|id| {
-        manifest
-            .annotations
-            .iter()
-            .find(|annotation| &annotation.id == id)
-    });
+    let annotation: Option<&Annotation> = frame
+        .annotation_ids
+        .iter()
+        .filter_map(|id| {
+            manifest
+                .annotations
+                .iter()
+                .find(|annotation| &annotation.id == id)
+        })
+        .min_by_key(|annotation| annotation.at_ms.abs_diff(frame.at_ms));
     let event = nearest_event(&manifest.timeline, frame.at_ms, 1_500);
     let label =
         target.and_then(|target| target.label.clone().or_else(|| target.text_excerpt.clone()));

@@ -9,9 +9,12 @@ use std::sync::OnceLock;
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont, point};
 use image::{Rgba, RgbaImage};
 
-use crate::model::{Annotation, AnnotationKind, KeyframeReason, NormalizedRect};
+use crate::model::{Annotation, AnnotationKind, KeyframeReason, NormalizedRect, ViewportRect};
 
 const FONT_BYTES: &[u8] = include_bytes!("../assets/LiberationSans-Regular.ttf");
+/// The SDK draws annotations with a 4 CSS pixel stroke and a 14 CSS pixel arrow head.
+const DEFAULT_STROKE_WIDTH_CSS_PX: f64 = 4.0;
+const ARROW_HEAD_CSS_PX: f64 = 14.0;
 const INK: Rgba<u8> = Rgba([255, 59, 92, 255]);
 const HIGHLIGHT: Rgba<u8> = Rgba([255, 214, 10, 61]);
 const BACKGROUND: Rgba<u8> = Rgba([17, 19, 24, 255]);
@@ -183,20 +186,42 @@ fn mapped_points(
         .collect()
 }
 
+fn stroke_scale(source: (u32, u32), viewport: Option<ViewportRect>) -> f64 {
+    viewport
+        .filter(|viewport| viewport.width.is_finite() && viewport.width > 0.0)
+        .map(|viewport| source.0 as f64 / viewport.width)
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+        .unwrap_or(1.0)
+}
+
 fn paint_annotation(
     image: &mut RgbaImage,
     annotation: &Annotation,
     source: (u32, u32),
     origin: (f64, f64),
+    scale: f64,
+    at_ms: u64,
 ) {
+    // A keyframe captured during the overlay fade is still evidence the user pointed
+    // at something, so burn the stroke at full opacity. Only fully faded annotations
+    // are skipped.
+    if annotation.opacity_at(at_ms) <= 0.0 {
+        return;
+    }
     let points = mapped_points(&annotation.points, origin, source);
     if points.len() < 2 {
         return;
     }
     let first = points[0];
     let last = points[points.len() - 1];
-    let thickness = ((image.width().min(image.height()) as f64 * 0.004).round()).clamp(2.0, 14.0);
-    let head = (thickness * 5.0).max(10.0);
+    // Reproduce the CSS-pixel stroke the user drew instead of deriving a thinner
+    // width from the (possibly cropped) output image.
+    let stroke_width = annotation
+        .stroke_width
+        .filter(|width| width.is_finite() && *width > 0.0)
+        .unwrap_or(DEFAULT_STROKE_WIDTH_CSS_PX);
+    let thickness = (stroke_width * scale).max(1.0);
+    let head = (ARROW_HEAD_CSS_PX * scale).max(thickness * 3.0);
 
     match annotation.kind {
         AnnotationKind::Freehand => draw_polyline(image, &points, thickness, INK),
@@ -214,7 +239,15 @@ fn paint_annotation(
             let width = (last.0 - first.0).abs().round() as i32;
             let height = (last.1 - first.1).abs().round() as i32;
             fill_rect(image, x, y, width, height, HIGHLIGHT);
-            draw_rect_stroke(image, x, y, width, height, thickness as i32, INK);
+            draw_rect_stroke(
+                image,
+                x,
+                y,
+                width,
+                height,
+                thickness.round().max(1.0) as i32,
+                INK,
+            );
         }
         AnnotationKind::Arrow => {
             let angle = (last.1 - first.1).atan2(last.0 - first.0);
@@ -300,10 +333,17 @@ pub struct RenderedFrame {
 }
 
 /// Crop a captured frame and burn its annotations into it.
+///
+/// `viewport` is the CSS-pixel viewport the annotations were drawn in. It scales
+/// stroke widths from CSS pixels to captured pixels so lines keep their original
+/// weight, including after a crop. `at_ms` drops annotations whose fade completed;
+/// annotations still present are burned at full opacity.
 pub fn render_frame(
     source_path: &Path,
     crop: Option<NormalizedRect>,
     annotations: &[Annotation],
+    viewport: Option<ViewportRect>,
+    at_ms: u64,
 ) -> Result<RenderedFrame, RenderError> {
     let source = image::open(source_path).map_err(|error| {
         RenderError::new(format!(
@@ -346,12 +386,15 @@ pub fn render_frame(
         source
     };
 
+    let scale = stroke_scale((source_width, source_height), viewport);
     for annotation in annotations {
         paint_annotation(
             &mut frame,
             annotation,
             (source_width, source_height),
             (x0 as f64, y0 as f64),
+            scale,
+            at_ms,
         );
     }
 

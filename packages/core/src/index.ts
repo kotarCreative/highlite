@@ -43,6 +43,12 @@ export interface Annotation {
   kind: AnnotationKind;
   points: Array<{ x: number; y: number }>;
   coordinateSpace: 'viewport-normalized';
+  /** Stroke width in CSS pixels, so the compiler can reproduce the line weight. */
+  strokeWidth?: number;
+  /** Time the annotation stays fully opaque before it starts fading, in milliseconds. */
+  fadeAfterMs?: number;
+  /** Fade animation duration in milliseconds. */
+  fadeDurationMs?: number;
   targetId?: string;
 }
 

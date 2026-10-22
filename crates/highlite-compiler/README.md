@@ -145,10 +145,15 @@ segments through `shift_transcript`.
 - Keyframe budget: 6 up to 20 s, one more per 20 s, capped at 12 (override up to 24).
 - Marks and annotations are pinned; ordinary frames are scored and deduplicated.
 - Narration is partitioned by clause and attached to keyframes in order.
-- Crops come from annotation bounds first, then DOM target rects.
+- Crops cover the DOM target and every annotation burned into that keyframe.
 - Crops are applied to the stored frames when writing a bundle, not just reported.
-- Annotations are drawn into each keyframe that references them, in the keyframe's cropped
-  coordinate space.
+- Every annotation on screen when a frame was captured is attached to its keyframe and
+  drawn in the cropped coordinate space. Stroke widths use the recorded CSS width scaled
+  to the captured pixels, so lines keep the weight the user drew.
+- Annotations hold for four seconds, then fade out. Keyframes captured while a stroke is
+  still on screen burn it at full opacity so the evidence stays readable; fully faded
+  strokes are left out.
+- Scrolling or a route change clears annotations immediately, matching the SDK overlay.
 - Spoken cues: “here”, “look”, “watch”, and “now” pin a nearby frame. “this”, “that”,
   “these”, “those”, “see”, and “there” only label an already-selected mark, annotation, or
   visual change. A strong cue with no captured frame nearby produces a warning instead of

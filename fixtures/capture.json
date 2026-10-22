@@ -126,6 +126,9 @@
           }
         ],
         "coordinateSpace": "viewport-normalized",
+        "strokeWidth": 4,
+        "fadeAfterMs": 4000,
+        "fadeDurationMs": 400,
         "targetId": "t2"
       }
     ],

@@ -139,9 +139,9 @@ fn derives_crops_from_targets_and_annotations() {
     assert!((mark.width - 0.448).abs() < 0.001);
     assert!((mark.height - 0.4).abs() < 0.001);
 
-    assert!((annotation.x - 0.1).abs() < 0.001);
-    assert!((annotation.y - 0.2).abs() < 0.001);
-    assert!((annotation.width - 0.4).abs() < 0.001);
+    assert!((annotation.x - 0.176).abs() < 0.001);
+    assert!((annotation.y - 0.2625).abs() < 0.001);
+    assert!((annotation.width - 0.448).abs() < 0.001);
     assert!((annotation.height - 0.4).abs() < 0.001);
 
     assert!(compiled.keyframes[3].crop.is_none());

@@ -120,7 +120,14 @@ pub fn write_bundle(
             Vec::new()
         };
 
-        let rendered = render_frame(&source_path, keyframe.crop, &annotations)?;
+        let viewport = compiled.viewport.or(compiled.manifest.viewport);
+        let rendered = render_frame(
+            &source_path,
+            keyframe.crop,
+            &annotations,
+            viewport,
+            keyframe.at_ms,
+        )?;
         let relative = format!("frames/frame-{:02}.png", position + 1);
         save_png(&rendered.image, &output_directory.join(&relative))?;
         paths.push(relative);

@@ -185,6 +185,46 @@ fn annotation_id_from_event(event: Option<&TimelineEvent>) -> Option<String> {
     }
 }
 
+/// Scrolling and route changes take the annotation overlay off screen in the SDK.
+/// Annotations drawn before the latest such event are no longer visible.
+fn clears_annotations(event: &TimelineEvent) -> bool {
+    matches!(event.kind, TimelineKind::Scroll | TimelineKind::Navigate)
+}
+
+/// Annotations that are on screen at `at_ms`, in manifest order.
+fn visible_annotation_ids(manifest: &HighliteManifest, at_ms: u64) -> Vec<String> {
+    let cleared_at = manifest
+        .timeline
+        .iter()
+        .filter(|event| event.at_ms <= at_ms && clears_annotations(event))
+        .map(|event| event.at_ms)
+        .max();
+
+    manifest
+        .annotations
+        .iter()
+        .filter(|annotation| {
+            annotation.at_ms <= at_ms
+                && annotation.opacity_at(at_ms) > 0.0
+                && cleared_at.is_none_or(|cleared_at| annotation.at_ms >= cleared_at)
+        })
+        .map(|annotation| annotation.id.clone())
+        .collect()
+}
+
+fn union_rect(left: ViewportRect, right: ViewportRect) -> ViewportRect {
+    let x = left.x.min(right.x);
+    let y = left.y.min(right.y);
+    let right_edge = (left.x + left.width).max(right.x + right.width);
+    let bottom_edge = (left.y + left.height).max(right.y + right.height);
+    ViewportRect {
+        x,
+        y,
+        width: right_edge - x,
+        height: bottom_edge - y,
+    }
+}
+
 fn normalize_frame(frame: &FrameCandidate) -> Option<FrameCandidate> {
     if frame.keyframe.image_path.is_empty() {
         return None;
@@ -234,6 +274,7 @@ fn build_candidates(
     frames
         .iter()
         .map(|frame| {
+            let mut frame = frame.clone();
             let event =
                 nearest_event(&manifest.timeline, frame.keyframe.at_ms, EVENT_MATCH_MS).cloned();
             let reason = frame.keyframe.reason;
@@ -243,12 +284,22 @@ fn build_candidates(
                 .first()
                 .cloned()
                 .or_else(|| event.as_ref().and_then(|event| event.target_id.clone()));
+            let visible = visible_annotation_ids(manifest, frame.keyframe.at_ms);
             let annotation_id = frame
                 .keyframe
                 .annotation_ids
                 .first()
                 .cloned()
-                .or_else(|| annotation_id_from_event(event.as_ref()));
+                .or_else(|| annotation_id_from_event(event.as_ref()))
+                .or_else(|| visible.last().cloned());
+            // A frame shows every annotation still on screen when it was captured, not
+            // only the stroke that triggered it. Without this, a second annotation makes
+            // the first one disappear from its keyframe.
+            frame.keyframe.annotation_ids = unique_strings(
+                visible
+                    .into_iter()
+                    .chain(frame.keyframe.annotation_ids.iter().cloned()),
+            );
             let mut score = base_score(reason);
             let mut score_reasons = vec![format!("reason:{}", reason.as_str())];
 
@@ -317,7 +368,7 @@ fn build_candidates(
                 pinned: matches!(reason, KeyframeReason::Mark | KeyframeReason::Annotation)
                     || cue.as_ref().is_some_and(|cue| cue.strong),
                 cue,
-                frame: frame.clone(),
+                frame,
             }
         })
         .collect()
@@ -596,6 +647,37 @@ fn expand_span(start: f64, end: f64, minimum: f64, maximum: f64) -> (f64, f64) {
     (start.max(0.0), end.min(maximum))
 }
 
+fn annotation_bounds(
+    annotation: &crate::model::Annotation,
+    viewport: ViewportRect,
+) -> Option<ViewportRect> {
+    if annotation.coordinate_space != crate::model::CoordinateSpace::ViewportNormalized
+        || annotation.points.is_empty()
+    {
+        return None;
+    }
+    let xs: Vec<f64> = annotation
+        .points
+        .iter()
+        .map(|point| point.x * viewport.width)
+        .collect();
+    let ys: Vec<f64> = annotation
+        .points
+        .iter()
+        .map(|point| point.y * viewport.height)
+        .collect();
+    let min_x = xs.iter().copied().fold(f64::INFINITY, f64::min);
+    let min_y = ys.iter().copied().fold(f64::INFINITY, f64::min);
+    let max_x = xs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let max_y = ys.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    Some(ViewportRect {
+        x: min_x,
+        y: min_y,
+        width: max_x - min_x,
+        height: max_y - min_y,
+    })
+}
+
 fn crop_for(
     candidate: &Candidate,
     manifest: &HighliteManifest,
@@ -607,50 +689,32 @@ fn crop_for(
         return None;
     }
 
-    let annotation = candidate.annotation_id.as_ref().and_then(|id| {
-        manifest
-            .annotations
-            .iter()
-            .find(|annotation| &annotation.id == id)
-    });
+    // Every annotation burned into this frame must fit inside the crop. Using only
+    // the triggering stroke clipped annotations drawn earlier in the session.
+    let annotation_rect = candidate
+        .frame
+        .keyframe
+        .annotation_ids
+        .iter()
+        .filter_map(|id| {
+            manifest
+                .annotations
+                .iter()
+                .find(|annotation| &annotation.id == id)
+        })
+        .filter_map(|annotation| annotation_bounds(annotation, viewport))
+        .reduce(union_rect);
     let target = candidate
         .target_id
         .as_ref()
         .and_then(|id| manifest.targets.iter().find(|target| &target.id == id));
 
-    let mut rect: Option<ViewportRect> = None;
-    if let Some(annotation) = annotation
-        && annotation.coordinate_space == crate::model::CoordinateSpace::ViewportNormalized
-        && !annotation.points.is_empty()
-    {
-        let xs: Vec<f64> = annotation
-            .points
-            .iter()
-            .map(|point| point.x * width)
-            .collect();
-        let ys: Vec<f64> = annotation
-            .points
-            .iter()
-            .map(|point| point.y * height)
-            .collect();
-        let min_x = xs.iter().copied().fold(f64::INFINITY, f64::min);
-        let min_y = ys.iter().copied().fold(f64::INFINITY, f64::min);
-        let max_x = xs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        let max_y = ys.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        rect = Some(ViewportRect {
-            x: min_x,
-            y: min_y,
-            width: max_x - min_x,
-            height: max_y - min_y,
-        });
-    }
-    if rect.is_none_or(|rect| rect.width < 24.0 || rect.height < 24.0)
-        && let Some(target) = target
-    {
-        rect = Some(target.rect);
-    }
-
-    let rect = rect?;
+    let rect = match (annotation_rect, target) {
+        (Some(annotation), Some(target)) => union_rect(annotation, target.rect),
+        (Some(annotation), None) => annotation,
+        (None, Some(target)) => target.rect,
+        (None, None) => return None,
+    };
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return None;
     }
