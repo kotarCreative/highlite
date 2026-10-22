@@ -141,33 +141,46 @@ const ANNOTATION_TOOLS: ReadonlyArray<{
   kind: AnnotationKind;
   label: string;
   hint: string;
+  shortcut: string;
   icon: string;
 }> = [
   {
     kind: 'freehand',
     label: 'Freehand annotation',
-    hint: 'Freehand — draw a stroke',
+    hint: 'Freehand — draw a stroke (F)',
+    shortcut: 'F',
     icon: ICON_PEN,
   },
   {
     kind: 'circle',
     label: 'Circle annotation',
-    hint: 'Circle — drag to outline an area',
+    hint: 'Circle — drag to outline an area (C)',
+    shortcut: 'C',
     icon: ICON_CIRCLE,
   },
   {
     kind: 'arrow',
     label: 'Arrow annotation',
-    hint: 'Arrow — drag to point at something',
+    hint: 'Arrow — drag to point at something (A)',
+    shortcut: 'A',
     icon: ICON_ARROW,
   },
   {
     kind: 'highlight',
     label: 'Highlight annotation',
-    hint: 'Highlight — drag to shade an area',
+    hint: 'Highlight — drag to shade an area (H)',
+    shortcut: 'H',
     icon: ICON_HIGHLIGHT,
   },
 ];
+
+/** Single-letter shortcuts that select an annotation tool while recording. */
+const TOOL_SHORTCUTS: Readonly<Record<string, AnnotationKind>> = {
+  f: 'freehand',
+  c: 'circle',
+  a: 'arrow',
+  h: 'highlight',
+};
 
 function iconSvg(body: string): string {
   return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
@@ -213,6 +226,7 @@ export class CaptureToolbar {
   #statusTimer: number | undefined;
   #drawing = false;
   #annotating = false;
+  #recording = false;
   #draft: NormalizedPoint[] = [];
   #annotationKind: AnnotationKind = 'freehand';
   #pixelRatio = 1;
@@ -311,12 +325,13 @@ export class CaptureToolbar {
     this.#interactButton = this.#iconButton(
       'Interact with page',
       ICON_POINTER,
-      'Interact — click the page normally',
+      'Interact — click the page normally (V)',
+      'V',
     );
     this.#interactButton.setAttribute('aria-pressed', 'true');
     this.#tools.append(this.#interactButton);
     for (const tool of ANNOTATION_TOOLS) {
-      const button = this.#iconButton(tool.label, tool.icon, tool.hint);
+      const button = this.#iconButton(tool.label, tool.icon, tool.hint, tool.shortcut);
       button.setAttribute('aria-pressed', 'false');
       this.#toolButtons.set(tool.kind, button);
       this.#tools.append(button);
@@ -326,21 +341,24 @@ export class CaptureToolbar {
     this.#markButton.type = 'button';
     this.#markButton.className = 'mark';
     this.#markButton.setAttribute('aria-label', 'Mark a moment in Highlite');
-    this.#markButton.title = 'Mark this moment';
+    this.#markButton.setAttribute('aria-keyshortcuts', 'M');
+    this.#markButton.title = 'Mark this moment (M)';
     this.#markButton.innerHTML = `${iconSvg(ICON_BOOKMARK)}<span>Mark</span>`;
 
     this.#cancelButton = document.createElement('button');
     this.#cancelButton.type = 'button';
     this.#cancelButton.className = 'discard';
     this.#cancelButton.setAttribute('aria-label', 'Discard Highlite session');
-    this.#cancelButton.dataset.tooltip = 'Discard Highlite session';
+    this.#cancelButton.setAttribute('aria-keyshortcuts', 'D');
+    this.#cancelButton.dataset.tooltip = 'Discard Highlite session (D)';
     this.#cancelButton.innerHTML = iconSvg(ICON_TRASH);
 
     this.#stopButton = document.createElement('button');
     this.#stopButton.type = 'button';
     this.#stopButton.className = 'stop';
     this.#stopButton.setAttribute('aria-label', 'Stop Highlite');
-    this.#stopButton.title = 'Stop Highlite';
+    this.#stopButton.setAttribute('aria-keyshortcuts', 'S');
+    this.#stopButton.title = 'Stop Highlite (S)';
     this.#stopButton.innerHTML = `${iconSvg(ICON_STOP)}<span>Stop</span>`;
 
     dockBar.append(
@@ -440,6 +458,7 @@ export class CaptureToolbar {
     this.#bindControls();
     this.#resizeCanvas();
     window.addEventListener('resize', this.#resizeCanvas);
+    window.addEventListener('keydown', this.#onKeydown, true);
   }
 
   readonly #resizeCanvas = (): void => {
@@ -522,6 +541,7 @@ export class CaptureToolbar {
   }
 
   setStarting(): void {
+    this.#recording = false;
     this.#setPanelOpen(false);
     this.#launcher.hidden = true;
     this.#dock.hidden = false;
@@ -537,6 +557,7 @@ export class CaptureToolbar {
   }
 
   setRecording(recording: boolean): void {
+    this.#recording = recording;
     this.#dock.hidden = !recording;
     if (!recording) {
       this.#setAnnotating(false);
@@ -557,6 +578,7 @@ export class CaptureToolbar {
 
   setProcessing(): void {
     this.dismissPermission();
+    this.#recording = false;
     this.#setAnnotating(false);
     this.#dock.hidden = true;
     this.#launcher.hidden = false;
@@ -567,6 +589,7 @@ export class CaptureToolbar {
 
   setComplete(): void {
     this.dismissPermission();
+    this.#recording = false;
     this.#setAnnotating(false);
     this.#dock.hidden = true;
     this.#launcher.hidden = false;
@@ -577,6 +600,7 @@ export class CaptureToolbar {
 
   setCancelled(): void {
     this.dismissPermission();
+    this.#recording = false;
     this.#dismissDiscard(false);
     this.#setAnnotating(false);
     this.#dock.hidden = true;
@@ -611,6 +635,7 @@ export class CaptureToolbar {
     this.dismissPermission();
     this.#dismissDiscard(false);
     window.removeEventListener('resize', this.#resizeCanvas);
+    window.removeEventListener('keydown', this.#onKeydown, true);
     this.#host.remove();
   }
 
@@ -623,11 +648,12 @@ export class CaptureToolbar {
     return button;
   }
 
-  #iconButton(label: string, icon: string, hint: string): HTMLButtonElement {
+  #iconButton(label: string, icon: string, hint: string, shortcut: string): HTMLButtonElement {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'tool';
     button.setAttribute('aria-label', label);
+    button.setAttribute('aria-keyshortcuts', shortcut);
     button.dataset.tooltip = hint;
     button.innerHTML = iconSvg(icon);
     return button;
@@ -659,10 +685,7 @@ export class CaptureToolbar {
     this.#confirmBackdrop.addEventListener('keydown', this.#onDiscardKeydown);
     this.#interactButton.addEventListener('click', () => this.#setAnnotating(false));
     for (const [kind, button] of this.#toolButtons) {
-      button.addEventListener('click', () => {
-        this.#annotationKind = kind;
-        this.#setAnnotating(true);
-      });
+      button.addEventListener('click', () => this.#selectTool(kind));
     }
     this.#canvas.addEventListener('pointerdown', this.#onPointerDown);
     this.#canvas.addEventListener('pointermove', this.#onPointerMove);
@@ -741,6 +764,66 @@ export class CaptureToolbar {
     }
   };
 
+  readonly #onKeydown = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented || event.isComposing || event.repeat) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.isContentEditable ||
+        target.closest(
+          'input, textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"], [role="combobox"]',
+        ) !== null)
+    ) {
+      return;
+    }
+
+    if (!this.#confirmBackdrop.hidden) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.#dismissDiscard();
+      }
+      return;
+    }
+    if (!this.#recording || this.#drawing) return;
+
+    const key = event.key.toLowerCase();
+    if (key === 'escape') {
+      if (!this.#annotating) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.#setAnnotating(false);
+      return;
+    }
+
+    const tool = TOOL_SHORTCUTS[key];
+    if (tool) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.#selectTool(tool);
+      return;
+    }
+
+    if (key === 'v') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.#setAnnotating(false);
+    } else if (key === 'm') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.#run(this.#options.onMark);
+    } else if (key === 'd') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.#requestDiscard();
+    } else if (key === 's') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.#run(this.#options.onStop);
+    }
+  };
+
   #requestDiscard(): void {
     if (!this.#confirmBackdrop.hidden) return;
     this.#confirmReturnFocus =
@@ -771,6 +854,11 @@ export class CaptureToolbar {
     } catch (error) {
       this.setStatus(error instanceof Error ? error.message : 'Highlite action failed.');
     }
+  }
+
+  #selectTool(kind: AnnotationKind): void {
+    this.#annotationKind = kind;
+    this.#setAnnotating(true);
   }
 
   #setAnnotating(annotating: boolean): void {

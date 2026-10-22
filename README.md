@@ -122,6 +122,22 @@ The asset URL above is an example path, not a published CDN endpoint.
 
 Run `pnpm dev` and open the demo to try the analytics walkthrough. Its local preview shows the exact manifest and summary assembled by the SDK; it does not upload captures.
 
+## Keyboard shortcuts
+
+While a Highlite session is recording, these shortcuts work anywhere on the page except inside inputs, textareas, selects, and contenteditable fields:
+
+| Key   | Action                                                  |
+| ----- | ------------------------------------------------------- |
+| `V`   | Interact with the page                                  |
+| `F`   | Freehand annotation                                     |
+| `C`   | Circle annotation                                       |
+| `A`   | Arrow annotation                                        |
+| `H`   | Highlight annotation                                    |
+| `M`   | Mark the current moment                                 |
+| `D`   | Discard the Highlite session (asks for confirmation)    |
+| `S`   | Stop and assemble the bundle                            |
+| `Esc` | Leave annotation mode or close the discard confirmation |
+
 ## Capture limitations
 
 - Screenshots only exist when a user-approved frame provider supplies actual pixels. Ordinary page DOM APIs are not treated as screenshots.

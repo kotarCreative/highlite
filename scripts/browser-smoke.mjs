@@ -89,6 +89,27 @@ try {
   );
 
   const circleTool = page.getByRole('button', { name: 'Circle annotation' });
+  assert.equal(await circleTool.getAttribute('aria-keyshortcuts'), 'C');
+  for (const [key, label] of [
+    ['f', 'Freehand annotation'],
+    ['c', 'Circle annotation'],
+    ['a', 'Arrow annotation'],
+    ['h', 'Highlight annotation'],
+  ]) {
+    await page.keyboard.press(key);
+    assert.equal(
+      await page.getByRole('button', { name: label }).getAttribute('aria-pressed'),
+      'true',
+      `The ${key.toUpperCase()} shortcut must select the ${label}.`,
+    );
+  }
+  await page.keyboard.press('v');
+  assert.equal(
+    await circleTool.getAttribute('aria-pressed'),
+    'false',
+    'The V shortcut must return to interact mode.',
+  );
+
   const tooltipContent = await circleTool.evaluate(
     (element) => getComputedStyle(element, '::after').content,
   );
@@ -130,7 +151,12 @@ try {
       return ink;
     });
   assert.ok((await countInkPixels()) > 0, 'The annotation must be visible when drawn.');
-  await page.getByRole('button', { name: 'Interact with page' }).click();
+  await page.keyboard.press('Escape');
+  assert.equal(
+    await circleTool.getAttribute('aria-pressed'),
+    'false',
+    'Escape must leave annotation mode.',
+  );
   await page.waitForTimeout(4_500);
   assert.equal(
     await countInkPixels(),
@@ -142,8 +168,15 @@ try {
   await page.locator('#date-range').click();
   await page.locator('#date-range').selectOption('7');
   assert.equal(await page.locator('#retention-value').textContent(), '108%');
-  await page.getByRole('button', { name: 'Mark a moment in Highlite' }).click();
-  await page.getByRole('button', { name: 'Stop Highlite' }).click();
+  await page.keyboard.press('f');
+  assert.equal(
+    await page.getByRole('button', { name: 'Freehand annotation' }).getAttribute('aria-pressed'),
+    'false',
+    'Shortcuts must not fire while typing in a page field.',
+  );
+  await page.locator('#page-title').click();
+  await page.keyboard.press('m');
+  await page.keyboard.press('s');
   await page.locator('#preview-result').waitFor({ state: 'visible' });
 
   const manifest = JSON.parse((await page.locator('#manifest-preview').textContent()) ?? '{}');
@@ -361,7 +394,16 @@ try {
     'Keeping the capture must close the discard confirmation.',
   );
   await discardPage.getByRole('button', { name: 'Mark a moment in Highlite' }).waitFor();
-  await discardButton.click();
+  await discardPage.keyboard.press('d');
+  await discardDialog.getByRole('heading', { name: 'Discard this Highlite session?' }).waitFor();
+  await discardPage.keyboard.press('Escape');
+  assert.equal(
+    await discardDialog.isVisible(),
+    false,
+    'Escape must close the discard confirmation.',
+  );
+  await discardPage.keyboard.press('d');
+  await discardDialog.getByRole('heading', { name: 'Discard this Highlite session?' }).waitFor();
   await discardDialog.getByRole('button', { name: 'Discard Highlite session' }).click();
   await discardPage
     .getByRole('status')
@@ -373,7 +415,7 @@ try {
   await context.close();
   await pendingContext.close();
   process.stdout.write(
-    'Browser smoke passed: ESM/IIFE builds, audio, frames, annotations, tooltips, interactions, export, discard confirmation, and cancel.\n',
+    'Browser smoke passed: ESM/IIFE builds, audio, frames, annotations, tooltips, keyboard shortcuts, interactions, export, discard confirmation, and cancel.\n',
   );
 } finally {
   await browser?.close();
