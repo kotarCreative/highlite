@@ -42,6 +42,7 @@ export interface ToolbarOptions {
 const styles = `
 :host { all: initial; position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: var(--highlite-z); pointer-events: none; color: #172033; font: 14px/1.4 system-ui, sans-serif; }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 button, select { font: inherit; }
 .toolbar { position: fixed; right: 20px; bottom: 20px; width: min(340px, calc(100vw - 32px)); pointer-events: auto; }
 .launcher { margin-left: auto; display: block; border: 0; border-radius: 999px; padding: 12px 16px; color: white; background: #3b5bdb; box-shadow: 0 8px 28px #17203330; font-weight: 700; cursor: pointer; }
@@ -57,12 +58,49 @@ button, select { font: inherit; }
 .row button, .row select { min-height: 34px; border: 1px solid #cdd5e1; border-radius: 8px; padding: 6px 10px; background: white; color: #172033; cursor: pointer; }
 .row button:hover { background: #f4f6fa; }
 .row button.primary { border-color: #3b5bdb; color: white; background: #3b5bdb; }
-.row button.danger { color: #b42318; }
 .row button:disabled, .row select:disabled { cursor: not-allowed; opacity: .52; }
-.recording { display: inline-flex; align-items: center; gap: 6px; color: #b42318; font-size: 12px; font-weight: 700; }
-.recording[hidden] { display: none; }
-.recording::before { width: 8px; height: 8px; border-radius: 50%; background: currentColor; content: ''; }
 canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; touch-action: none; }
+.dock { position: fixed; left: 50%; bottom: 24px; display: flex; max-width: calc(100vw - 32px); flex-direction: column; align-items: center; gap: 10px; transform: translateX(-50%); pointer-events: none; }
+.dock-status { position: relative; z-index: 1; max-width: min(560px, calc(100vw - 48px)); padding: 7px 13px; border-radius: 999px; background: #16181de6; box-shadow: 0 10px 26px #0f111640; color: #dfe3eb; font-size: 12px; line-height: 1.35; text-align: center; pointer-events: auto; }
+.dock-status:empty { display: none; }
+.dock-bar { display: flex; align-items: center; gap: 6px; padding: 7px; border-radius: 16px; background: #16181df7; box-shadow: 0 18px 44px #0f111659, inset 0 0 0 1px #ffffff12; color: #e7eaf0; pointer-events: auto; }
+.rec { display: inline-flex; align-items: center; gap: 7px; padding: 0 9px 0 7px; color: #ff9b9e; font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+/* Uppercase cap-height sits high in the line box; nudge it onto the dot's center. */
+.rec span { position: relative; top: 1.5px; }
+.rec::before { width: 8px; height: 8px; border-radius: 50%; background: #f2555a; box-shadow: 0 0 0 3px #f2555a2e; content: ''; animation: highlite-pulse 1.8s ease-in-out infinite; }
+.rec.is-starting { color: #b8c0ce; }
+.rec.is-starting::before { background: #8f99a8; box-shadow: none; animation: none; }
+@keyframes highlite-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .rec::before { animation: none; } }
+.tools { display: flex; align-items: center; gap: 2px; }
+.tool, .discard { position: relative; display: grid; width: 38px; height: 38px; place-items: center; border: 0; border-radius: 10px; padding: 0; background: transparent; color: #aeb6c4; cursor: pointer; }
+.tool svg { width: 19px; height: 19px; }
+.discard svg { width: 18px; height: 18px; }
+.tool:hover, .discard:hover { background: #272b34; color: #fff; }
+.tool[aria-pressed='true'] { background: #5a66dc; color: #fff; box-shadow: inset 0 1px 0 #ffffff2e; }
+.tool:focus-visible, .discard:focus-visible, .mark:focus-visible, .stop:focus-visible { outline: 3px solid #91a7ff; outline-offset: 2px; }
+.tool::after, .discard::after { content: attr(data-tooltip); position: absolute; left: 50%; bottom: calc(100% + 9px); z-index: 2; padding: 5px 9px; border-radius: 7px; background: #f5f6f9; box-shadow: 0 6px 18px #0f11164d; color: #16181d; font-size: 11px; font-weight: 600; line-height: 1.3; letter-spacing: 0; text-transform: none; white-space: nowrap; opacity: 0; visibility: hidden; transform: translate(-50%, 2px); transition: opacity .12s ease, transform .12s ease, visibility .12s; pointer-events: none; }
+.tool:hover::after, .tool:focus-visible::after, .discard:hover::after, .discard:focus-visible::after { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+.tools > .tool:first-child::after { left: 0; transform: translate(0, 2px); }
+.tools > .tool:first-child:hover::after, .tools > .tool:first-child:focus-visible::after { transform: translate(0, 0); }
+.separator { width: 1px; height: 24px; margin: 0 4px; background: #ffffff1f; }
+.mark { display: inline-flex; height: 38px; align-items: center; gap: 7px; padding: 0 13px; border: 0; border-radius: 10px; background: #ffffff12; color: #e7eaf0; font-size: 12px; font-weight: 600; cursor: pointer; }
+.mark svg { width: 16px; height: 16px; }
+.mark:hover { background: #ffffff21; }
+.stop { display: inline-flex; height: 38px; align-items: center; gap: 8px; padding: 0 16px 0 13px; border: 0; border-radius: 10px; background: #e5484d; color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: inset 0 1px 0 #ffffff2e; }
+.stop svg { width: 16px; height: 16px; }
+.stop:hover { background: #d93d42; }
+@media (max-width: 560px) {
+  .dock { bottom: 16px; }
+  .dock-bar { gap: 4px; padding: 6px; }
+  .rec { padding: 0 4px; }
+  .rec span, .mark span { display: none; }
+  .tool, .discard, .mark { width: 32px; height: 32px; }
+  .mark { justify-content: center; padding: 0; }
+  .separator { margin: 0 2px; }
+  .stop { height: 32px; padding: 0 12px; }
+  .dock-status { font-size: 11px; }
+}
 .backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; background: #17203359; pointer-events: auto; }
 .backdrop[hidden] { display: none; }
 .modal { position: relative; width: min(430px, 100%); padding: 20px; border-radius: 16px; background: #fff; box-shadow: 0 24px 64px #17203355; }
@@ -79,22 +117,80 @@ canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events:
 .actions button:hover { background: #f4f6fa; }
 .actions button.primary { border-color: #3b5bdb; background: #3b5bdb; color: #fff; font-weight: 700; }
 .actions button.primary:hover { background: #2f4ac4; }
+.actions button.danger { border-color: #e5484d; background: #e5484d; color: #fff; font-weight: 700; }
+.actions button.danger:hover { background: #d93d42; }
 .actions button:disabled { cursor: progress; opacity: .6; }
 `;
+
+const ICON_POINTER =
+  '<path d="M4.04 4.69a.5.5 0 0 1 .65-.65l16 6.5a.5.5 0 0 1-.06.95l-6.13 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.12a.5.5 0 0 1-.95.06z"/>';
+const ICON_PEN =
+  '<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>';
+const ICON_CIRCLE = '<circle cx="12" cy="12" r="8.5"/>';
+const ICON_ARROW = '<path d="M5 19 19 5"/><path d="M9 5h10v10"/>';
+const ICON_HIGHLIGHT =
+  '<path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4Z"/>';
+const ICON_BOOKMARK = '<path d="m19 21-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2Z"/>';
+const ICON_TRASH =
+  '<path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11h4"/><path d="M10 15h4"/>';
+const ICON_STOP =
+  '<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>';
+
+/** One compact tool button per annotation kind, in the order shown in the session dock. */
+const ANNOTATION_TOOLS: ReadonlyArray<{
+  kind: AnnotationKind;
+  label: string;
+  hint: string;
+  icon: string;
+}> = [
+  {
+    kind: 'freehand',
+    label: 'Freehand annotation',
+    hint: 'Freehand — draw a stroke',
+    icon: ICON_PEN,
+  },
+  {
+    kind: 'circle',
+    label: 'Circle annotation',
+    hint: 'Circle — drag to outline an area',
+    icon: ICON_CIRCLE,
+  },
+  {
+    kind: 'arrow',
+    label: 'Arrow annotation',
+    hint: 'Arrow — drag to point at something',
+    icon: ICON_ARROW,
+  },
+  {
+    kind: 'highlight',
+    label: 'Highlight annotation',
+    hint: 'Highlight — drag to shade an area',
+    icon: ICON_HIGHLIGHT,
+  },
+];
+
+function iconSvg(body: string): string {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+}
 
 export class CaptureToolbar {
   readonly #host: HTMLDivElement;
   readonly #root: ShadowRoot;
   readonly #panel: HTMLDivElement;
+  readonly #launcher: HTMLButtonElement;
   readonly #status: HTMLDivElement;
-  readonly #recordingBadge: HTMLSpanElement;
+  readonly #dock: HTMLDivElement;
+  readonly #dockStatus: HTMLDivElement;
+  readonly #dockLabel: HTMLSpanElement;
+  readonly #dockLabelText: HTMLSpanElement;
+  readonly #tools: HTMLDivElement;
+  readonly #interactButton: HTMLButtonElement;
+  readonly #toolButtons = new Map<AnnotationKind, HTMLButtonElement>();
   readonly #recordButton: HTMLButtonElement;
   readonly #markButton: HTMLButtonElement;
-  readonly #annotateButton: HTMLButtonElement;
   readonly #stopButton: HTMLButtonElement;
   readonly #cancelButton: HTMLButtonElement;
   readonly #exportButton: HTMLButtonElement;
-  readonly #shapeSelect: HTMLSelectElement;
   readonly #canvas: HTMLCanvasElement;
   readonly #context: CanvasRenderingContext2D;
   readonly #backdrop: HTMLDivElement;
@@ -106,11 +202,15 @@ export class CaptureToolbar {
   readonly #permissionAllow: HTMLButtonElement;
   readonly #permissionSkip: HTMLButtonElement;
   readonly #permissionClose: HTMLButtonElement;
+  readonly #confirmBackdrop: HTMLDivElement;
+  readonly #confirmKeep: HTMLButtonElement;
+  readonly #confirmDiscardButton: HTMLButtonElement;
   readonly #options: ToolbarOptions;
   readonly #annotations: Annotation[] = [];
   readonly #annotationAddedAt = new Map<string, number>();
   #fadeTimer: number | undefined;
   #fadeFrame: number | undefined;
+  #statusTimer: number | undefined;
   #drawing = false;
   #annotating = false;
   #draft: NormalizedPoint[] = [];
@@ -119,6 +219,7 @@ export class CaptureToolbar {
   #disposed = false;
   #permissionResolve: ((decision: PermissionDecision) => void) | undefined;
   #returnFocus: HTMLElement | null = null;
+  #confirmReturnFocus: HTMLElement | null = null;
 
   constructor(mount: HTMLElement, options: ToolbarOptions) {
     this.#options = options;
@@ -142,17 +243,13 @@ export class CaptureToolbar {
     this.#panel.className = 'panel';
     this.#panel.hidden = true;
     this.#panel.setAttribute('role', 'region');
-    this.#panel.setAttribute('aria-label', 'Highlite capture toolbar');
+    this.#panel.setAttribute('aria-label', 'Highlite session toolbar');
 
     const heading = document.createElement('div');
     heading.className = 'heading';
     const title = document.createElement('strong');
-    title.textContent = 'Capture context';
-    this.#recordingBadge = document.createElement('span');
-    this.#recordingBadge.className = 'recording';
-    this.#recordingBadge.textContent = 'Recording';
-    this.#recordingBadge.hidden = true;
-    heading.append(title, this.#recordingBadge);
+    title.textContent = 'Highlite session';
+    heading.append(title);
 
     this.#status = document.createElement('div');
     this.#status.className = 'status';
@@ -163,57 +260,100 @@ export class CaptureToolbar {
     const disclosure = document.createElement('p');
     disclosure.className = 'disclosure';
     disclosure.textContent =
-      'Microphone and screen access are requested one at a time after you press Record. Captured pixels are not automatically redacted.';
+      'Microphone and screen access are requested one at a time after you press Record. Shared screen pixels are not automatically redacted.';
 
     const primaryRow = document.createElement('div');
     primaryRow.className = 'row';
-    this.#recordButton = this.#button('Record', 'Start capture', 'primary');
-    this.#markButton = this.#button('Mark', 'Capture a marked moment');
-    this.#stopButton = this.#button('Stop', 'Stop capture', 'danger');
-    this.#cancelButton = this.#button('Cancel', 'Discard capture');
-    primaryRow.append(this.#recordButton, this.#markButton, this.#stopButton, this.#cancelButton);
+    this.#recordButton = this.#button('Record', 'Start Highlite', 'primary');
+    primaryRow.append(this.#recordButton);
 
-    const annotationRow = document.createElement('div');
-    annotationRow.className = 'row';
-    this.#annotateButton = this.#button('Annotate: off', 'Enter annotation mode');
-    this.#annotateButton.setAttribute('aria-pressed', 'false');
-    this.#shapeSelect = document.createElement('select');
-    this.#shapeSelect.setAttribute('aria-label', 'Annotation shape');
-    for (const [value, label] of [
-      ['freehand', 'Freehand'],
-      ['circle', 'Circle'],
-      ['arrow', 'Arrow'],
-      ['highlight', 'Highlight'],
-    ] satisfies Array<[AnnotationKind, string]>) {
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      this.#shapeSelect.append(option);
-    }
-    annotationRow.append(this.#annotateButton, this.#shapeSelect);
-
-    this.#exportButton = this.#button('Download ZIP', 'Download the capture bundle', 'primary');
+    this.#exportButton = this.#button('Download ZIP', 'Download the Highlite bundle', 'primary');
     this.#exportButton.hidden = true;
-    this.#panel.append(
-      heading,
-      this.#status,
-      disclosure,
-      primaryRow,
-      annotationRow,
-      this.#exportButton,
-    );
+    this.#panel.id = 'highlite-capture-panel';
+    this.#panel.append(heading, this.#status, disclosure, primaryRow, this.#exportButton);
 
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar';
-    const launcher = this.#button('Capture context', 'Open Highlite capture tools', 'primary');
-    launcher.className = 'launcher';
-    launcher.addEventListener('click', () => {
-      this.#panel.hidden = !this.#panel.hidden;
-      launcher.setAttribute('aria-expanded', String(!this.#panel.hidden));
-    });
+    this.#launcher = this.#button('Highlite', 'Open Highlite tools', 'primary');
+    this.#launcher.className = 'launcher';
+    this.#launcher.setAttribute('aria-expanded', 'false');
+    this.#launcher.setAttribute('aria-controls', 'highlite-capture-panel');
+    this.#launcher.addEventListener('click', () => this.#setPanelOpen(this.#panel.hidden));
 
-    toolbar.append(this.#panel, launcher);
+    toolbar.append(this.#panel, this.#launcher);
     this.#root.append(toolbar);
+
+    this.#dock = document.createElement('div');
+    this.#dock.className = 'dock';
+    this.#dock.hidden = true;
+
+    this.#dockStatus = document.createElement('div');
+    this.#dockStatus.className = 'dock-status';
+    this.#dockStatus.setAttribute('role', 'status');
+    this.#dockStatus.setAttribute('aria-live', 'polite');
+
+    const dockBar = document.createElement('div');
+    dockBar.className = 'dock-bar';
+    dockBar.setAttribute('role', 'toolbar');
+    dockBar.setAttribute('aria-label', 'Highlite session actions');
+    dockBar.setAttribute('aria-orientation', 'horizontal');
+
+    this.#dockLabel = document.createElement('span');
+    this.#dockLabel.className = 'rec';
+    this.#dockLabelText = document.createElement('span');
+    this.#dockLabelText.textContent = 'Recording';
+    this.#dockLabel.append(this.#dockLabelText);
+
+    this.#tools = document.createElement('div');
+    this.#tools.className = 'tools';
+    this.#tools.setAttribute('role', 'group');
+    this.#tools.setAttribute('aria-label', 'Annotate');
+    this.#interactButton = this.#iconButton(
+      'Interact with page',
+      ICON_POINTER,
+      'Interact — click the page normally',
+    );
+    this.#interactButton.setAttribute('aria-pressed', 'true');
+    this.#tools.append(this.#interactButton);
+    for (const tool of ANNOTATION_TOOLS) {
+      const button = this.#iconButton(tool.label, tool.icon, tool.hint);
+      button.setAttribute('aria-pressed', 'false');
+      this.#toolButtons.set(tool.kind, button);
+      this.#tools.append(button);
+    }
+
+    this.#markButton = document.createElement('button');
+    this.#markButton.type = 'button';
+    this.#markButton.className = 'mark';
+    this.#markButton.setAttribute('aria-label', 'Mark a moment in Highlite');
+    this.#markButton.title = 'Mark this moment';
+    this.#markButton.innerHTML = `${iconSvg(ICON_BOOKMARK)}<span>Mark</span>`;
+
+    this.#cancelButton = document.createElement('button');
+    this.#cancelButton.type = 'button';
+    this.#cancelButton.className = 'discard';
+    this.#cancelButton.setAttribute('aria-label', 'Discard Highlite session');
+    this.#cancelButton.dataset.tooltip = 'Discard Highlite session';
+    this.#cancelButton.innerHTML = iconSvg(ICON_TRASH);
+
+    this.#stopButton = document.createElement('button');
+    this.#stopButton.type = 'button';
+    this.#stopButton.className = 'stop';
+    this.#stopButton.setAttribute('aria-label', 'Stop Highlite');
+    this.#stopButton.title = 'Stop Highlite';
+    this.#stopButton.innerHTML = `${iconSvg(ICON_STOP)}<span>Stop</span>`;
+
+    dockBar.append(
+      this.#dockLabel,
+      this.#tools,
+      this.#separator(),
+      this.#markButton,
+      this.#separator(),
+      this.#cancelButton,
+      this.#stopButton,
+    );
+    this.#dock.append(this.#dockStatus, dockBar);
+    this.#root.append(this.#dock);
 
     this.#backdrop = document.createElement('div');
     this.#backdrop.className = 'backdrop';
@@ -243,8 +383,8 @@ export class CaptureToolbar {
     actions.className = 'actions';
     this.#permissionAllow = this.#button('Allow', 'Allow this permission', 'primary');
     this.#permissionSkip = this.#button('Not now', 'Continue without this permission');
-    this.#permissionClose = this.#button('×', 'Cancel capture and discard', 'close');
-    this.#permissionClose.title = 'Cancel capture';
+    this.#permissionClose = this.#button('×', 'Cancel Highlite and discard', 'close');
+    this.#permissionClose.title = 'Cancel Highlite';
     actions.append(this.#permissionAllow, this.#permissionSkip);
 
     modal.append(
@@ -258,6 +398,43 @@ export class CaptureToolbar {
     );
     this.#backdrop.append(modal);
     this.#root.append(this.#backdrop);
+
+    this.#confirmBackdrop = document.createElement('div');
+    this.#confirmBackdrop.className = 'backdrop';
+    this.#confirmBackdrop.hidden = true;
+    const discardModal = document.createElement('div');
+    discardModal.className = 'modal';
+    discardModal.setAttribute('role', 'dialog');
+    discardModal.setAttribute('aria-modal', 'true');
+    discardModal.setAttribute('aria-labelledby', 'highlite-discard-title');
+    discardModal.setAttribute('aria-describedby', 'highlite-discard-description');
+
+    const discardTitle = document.createElement('h2');
+    discardTitle.id = 'highlite-discard-title';
+    discardTitle.textContent = 'Discard this Highlite session?';
+    const discardDescription = document.createElement('p');
+    discardDescription.className = 'description';
+    discardDescription.id = 'highlite-discard-description';
+    discardDescription.textContent =
+      'The recording, narration audio, and screenshots will be deleted. This cannot be undone.';
+
+    const discardActions = document.createElement('div');
+    discardActions.className = 'actions';
+    this.#confirmKeep = this.#button(
+      'Keep recording',
+      'Keep recording and return to the session',
+      'primary',
+    );
+    this.#confirmDiscardButton = this.#button(
+      'Discard Highlite session',
+      'Discard Highlite session',
+      'danger',
+    );
+    discardActions.append(this.#confirmKeep, this.#confirmDiscardButton);
+
+    discardModal.append(discardTitle, discardDescription, discardActions);
+    this.#confirmBackdrop.append(discardModal);
+    this.#root.append(this.#confirmBackdrop);
 
     mount.append(this.#host);
     this.#bindControls();
@@ -279,6 +456,22 @@ export class CaptureToolbar {
 
   setStatus(message: string): void {
     this.#status.textContent = message;
+    this.#setDockStatus(message);
+  }
+
+  #setDockStatus(message: string): void {
+    if (this.#statusTimer !== undefined) {
+      window.clearTimeout(this.#statusTimer);
+      this.#statusTimer = undefined;
+    }
+    this.#dockStatus.textContent = message;
+    if (!message) return;
+    // The dock is an overlay above the page, so keep its status message brief;
+    // the setup panel retains the full text after the session ends.
+    this.#statusTimer = window.setTimeout(() => {
+      this.#statusTimer = undefined;
+      this.#dockStatus.textContent = '';
+    }, 10_000);
   }
 
   requestPermission(request: PermissionRequest): Promise<PermissionDecision> {
@@ -329,70 +522,68 @@ export class CaptureToolbar {
   }
 
   setStarting(): void {
-    this.#panel.hidden = false;
-    this.#recordingBadge.hidden = true;
-    this.#recordButton.hidden = true;
+    this.#setPanelOpen(false);
+    this.#launcher.hidden = true;
+    this.#dock.hidden = false;
+    this.#dockLabel.classList.add('is-starting');
+    this.#dockLabelText.textContent = 'Starting';
+    this.#tools.hidden = true;
     this.#markButton.hidden = true;
-    this.#annotateButton.hidden = true;
-    this.#shapeSelect.hidden = true;
     this.#stopButton.hidden = true;
     this.#cancelButton.hidden = false;
     this.#exportButton.hidden = true;
-    this.setStatus('Starting capture…');
+    this.#setAnnotating(false);
+    this.setStatus('Starting Highlite…');
   }
 
   setRecording(recording: boolean): void {
-    this.#recordingBadge.hidden = !recording;
-    this.#recordButton.hidden = recording;
-    this.#markButton.hidden = !recording;
-    this.#annotateButton.hidden = !recording;
-    this.#shapeSelect.hidden = !recording;
-    this.#stopButton.hidden = !recording;
-    this.#cancelButton.hidden = !recording;
-    if (!recording) this.#setAnnotating(false);
+    this.#dock.hidden = !recording;
+    if (!recording) {
+      this.#setAnnotating(false);
+      this.#setPanelOpen(true);
+      this.#launcher.hidden = false;
+      return;
+    }
+    this.#setPanelOpen(false);
+    this.#launcher.hidden = true;
+    this.#dockLabel.classList.remove('is-starting');
+    this.#dockLabelText.textContent = 'Recording';
+    this.#tools.hidden = false;
+    this.#markButton.hidden = false;
+    this.#stopButton.hidden = false;
+    this.#cancelButton.hidden = false;
+    this.#setDockStatus('');
   }
 
   setProcessing(): void {
     this.dismissPermission();
     this.#setAnnotating(false);
-    this.#recordingBadge.hidden = true;
-    this.#recordButton.hidden = true;
-    this.#markButton.hidden = true;
-    this.#annotateButton.hidden = true;
-    this.#shapeSelect.hidden = true;
-    this.#stopButton.hidden = true;
-    this.#cancelButton.hidden = true;
+    this.#dock.hidden = true;
+    this.#launcher.hidden = false;
+    this.#setPanelOpen(true);
     this.#exportButton.hidden = true;
-    this.setStatus('Finishing audio and assembling the capture bundle…');
+    this.setStatus('Finishing audio and assembling the Highlite bundle…');
   }
 
   setComplete(): void {
     this.dismissPermission();
     this.#setAnnotating(false);
-    this.#recordingBadge.hidden = true;
-    this.#recordButton.hidden = true;
-    this.#markButton.hidden = true;
-    this.#annotateButton.hidden = true;
-    this.#shapeSelect.hidden = true;
-    this.#stopButton.hidden = true;
-    this.#cancelButton.hidden = true;
+    this.#dock.hidden = true;
+    this.#launcher.hidden = false;
     this.#exportButton.hidden = false;
-    this.#panel.hidden = false;
-    this.setStatus('Capture ready. Download the portable ZIP bundle.');
+    this.#setPanelOpen(true);
+    this.setStatus('Highlite session ready. Download the portable ZIP bundle.');
   }
 
   setCancelled(): void {
     this.dismissPermission();
+    this.#dismissDiscard(false);
     this.#setAnnotating(false);
-    this.#recordingBadge.hidden = true;
-    this.#recordButton.hidden = true;
-    this.#markButton.hidden = true;
-    this.#annotateButton.hidden = true;
-    this.#shapeSelect.hidden = true;
-    this.#stopButton.hidden = true;
-    this.#cancelButton.hidden = true;
+    this.#dock.hidden = true;
+    this.#launcher.hidden = false;
     this.#exportButton.hidden = true;
-    this.setStatus('Capture discarded. No bundle was created.');
+    this.#setPanelOpen(true);
+    this.setStatus('Highlite session discarded. No bundle was created.');
   }
 
   addAnnotation(annotation: Annotation): void {
@@ -413,7 +604,12 @@ export class CaptureToolbar {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#cancelFade();
+    if (this.#statusTimer !== undefined) {
+      window.clearTimeout(this.#statusTimer);
+      this.#statusTimer = undefined;
+    }
     this.dismissPermission();
+    this.#dismissDiscard(false);
     window.removeEventListener('resize', this.#resizeCanvas);
     this.#host.remove();
   }
@@ -427,16 +623,47 @@ export class CaptureToolbar {
     return button;
   }
 
+  #iconButton(label: string, icon: string, hint: string): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tool';
+    button.setAttribute('aria-label', label);
+    button.dataset.tooltip = hint;
+    button.innerHTML = iconSvg(icon);
+    return button;
+  }
+
+  #separator(): HTMLSpanElement {
+    const separator = document.createElement('span');
+    separator.className = 'separator';
+    separator.setAttribute('aria-hidden', 'true');
+    return separator;
+  }
+
+  #setPanelOpen(open: boolean): void {
+    this.#panel.hidden = !open;
+    this.#launcher.setAttribute('aria-expanded', String(open));
+  }
+
   #bindControls(): void {
     this.#recordButton.addEventListener('click', () => this.#run(this.#options.onStart));
     this.#markButton.addEventListener('click', () => this.#run(this.#options.onMark));
     this.#stopButton.addEventListener('click', () => this.#run(this.#options.onStop));
-    this.#cancelButton.addEventListener('click', () => this.#run(this.#options.onCancel));
+    this.#cancelButton.addEventListener('click', () => this.#requestDiscard());
     this.#exportButton.addEventListener('click', () => this.#run(this.#options.onExport));
-    this.#annotateButton.addEventListener('click', () => this.#setAnnotating(!this.#annotating));
-    this.#shapeSelect.addEventListener('change', () => {
-      this.#annotationKind = this.#shapeSelect.value as AnnotationKind;
+    this.#confirmKeep.addEventListener('click', () => this.#dismissDiscard());
+    this.#confirmDiscardButton.addEventListener('click', () => this.#discardCapture());
+    this.#confirmBackdrop.addEventListener('click', (event) => {
+      if (event.target === this.#confirmBackdrop) this.#dismissDiscard();
     });
+    this.#confirmBackdrop.addEventListener('keydown', this.#onDiscardKeydown);
+    this.#interactButton.addEventListener('click', () => this.#setAnnotating(false));
+    for (const [kind, button] of this.#toolButtons) {
+      button.addEventListener('click', () => {
+        this.#annotationKind = kind;
+        this.#setAnnotating(true);
+      });
+    }
     this.#canvas.addEventListener('pointerdown', this.#onPointerDown);
     this.#canvas.addEventListener('pointermove', this.#onPointerMove);
     this.#canvas.addEventListener('pointerup', this.#onPointerUp);
@@ -496,11 +723,53 @@ export class CaptureToolbar {
     resolve?.(decision);
   }
 
+  readonly #onDiscardKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.#dismissDiscard();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const first = this.#confirmKeep;
+    const last = this.#confirmDiscardButton;
+    if (event.shiftKey && this.#root.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && this.#root.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  #requestDiscard(): void {
+    if (!this.#confirmBackdrop.hidden) return;
+    this.#confirmReturnFocus =
+      this.#root.activeElement instanceof HTMLElement
+        ? this.#root.activeElement
+        : this.#cancelButton;
+    this.#confirmBackdrop.hidden = false;
+    requestAnimationFrame(() => this.#confirmKeep.focus());
+  }
+
+  #dismissDiscard(restoreFocus = true): void {
+    if (this.#confirmBackdrop.hidden) return;
+    this.#confirmBackdrop.hidden = true;
+    const focus = this.#confirmReturnFocus;
+    this.#confirmReturnFocus = null;
+    if (restoreFocus) focus?.focus();
+  }
+
+  #discardCapture(): void {
+    this.#confirmBackdrop.hidden = true;
+    this.#confirmReturnFocus = null;
+    this.#run(this.#options.onCancel);
+  }
+
   #run(action: () => void): void {
     try {
       action();
     } catch (error) {
-      this.setStatus(error instanceof Error ? error.message : 'Capture action failed.');
+      this.setStatus(error instanceof Error ? error.message : 'Highlite action failed.');
     }
   }
 
@@ -508,12 +777,10 @@ export class CaptureToolbar {
     this.#annotating = annotating;
     this.#canvas.style.pointerEvents = annotating ? 'auto' : 'none';
     this.#canvas.style.cursor = annotating ? 'crosshair' : 'default';
-    this.#annotateButton.textContent = annotating ? 'Interact' : 'Annotate: off';
-    this.#annotateButton.setAttribute(
-      'aria-label',
-      annotating ? 'Return to interact mode' : 'Enter annotation mode',
-    );
-    this.#annotateButton.setAttribute('aria-pressed', String(annotating));
+    this.#interactButton.setAttribute('aria-pressed', String(!annotating));
+    for (const [kind, button] of this.#toolButtons) {
+      button.setAttribute('aria-pressed', String(annotating && kind === this.#annotationKind));
+    }
     this.#options.onAnnotatingChange(annotating);
   }
 

@@ -106,7 +106,7 @@ const MICROPHONE_PERMISSION: PermissionStep = {
   description:
     'Highlite records your spoken explanation so an agent can follow the reasoning behind each interaction, not just the clicks.',
   details: [
-    'Audio is captured in this tab only while a recording is running.',
+    'Audio is recorded in this tab only while a Highlite session is running.',
     'The SDK does not upload audio by itself.',
   ],
   allowLabel: 'Allow microphone',
@@ -122,7 +122,7 @@ const DISPLAY_PERMISSION: PermissionStep = {
   details: [
     'Only still frames at clicks, marks, and annotations — not continuous video.',
     'The current tab is preselected in the browser share picker; confirm it to continue.',
-    'Captured pixels are not automatically redacted, so avoid sensitive content.',
+    'Shared screen pixels are not automatically redacted, so avoid sensitive content.',
   ],
   allowLabel: 'Share this tab',
   skipLabel: 'Continue without screenshots',
@@ -141,7 +141,7 @@ function createId(): string {
 }
 
 function safeMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'An unknown capture error occurred.';
+  return error instanceof Error ? error.message : 'An unknown Highlite error occurred.';
 }
 
 function textExcerpt(value: string | null | undefined): string | undefined {
@@ -234,10 +234,10 @@ class Highlite implements HighliteController {
     this.#frameEndUnsubscribe = this.#frameProvider?.onEnded?.(() => {
       this.#frameAvailable = false;
       this.#addWarning(
-        'Display sharing ended before capture stopped; no later visual frames are available.',
+        'Display sharing ended before Highlite stopped; no later visual frames are available.',
       );
       this.#toolbar?.setStatus(
-        'Display sharing ended. Audio and web context can still be captured.',
+        'Display sharing ended. Audio and web context can still be recorded.',
       );
     });
 
@@ -264,7 +264,7 @@ class Highlite implements HighliteController {
   async start(): Promise<void> {
     if (this.#state !== 'idle') throw new Error('A Highlite instance can record only once.');
     if (this.#isDisabledRoute(location.pathname)) {
-      throw new Error('Capture is disabled on this route.');
+      throw new Error('Highlite is disabled on this route.');
     }
 
     this.#state = 'starting';
@@ -288,7 +288,7 @@ class Highlite implements HighliteController {
   async stop(): Promise<HighliteBundle> {
     if (this.#state === 'starting' && this.#startPromise) await this.#startPromise;
     if (this.#state !== 'recording' || !this.#timeline) {
-      throw new Error('There is no active Highlite capture to stop.');
+      throw new Error('There is no active Highlite session to stop.');
     }
 
     const durationMs = this.#timeline.now();
@@ -367,7 +367,7 @@ class Highlite implements HighliteController {
     if (this.#state === 'cancelled' || this.#state === 'destroyed' || this.#state === 'stopped')
       return;
     if (this.#state === 'processing')
-      throw new Error('Processing has started; the capture can no longer be cancelled.');
+      throw new Error('Processing has started; the Highlite session can no longer be cancelled.');
     const wasStarting = this.#state === 'starting';
     this.#state = 'cancelled';
     this.#removeInteractionListeners();
@@ -428,7 +428,7 @@ class Highlite implements HighliteController {
   }
 
   async export(options: { download?: boolean } = {}): Promise<Blob> {
-    if (!this.#bundle) throw new Error('Stop a capture before exporting its bundle.');
+    if (!this.#bundle) throw new Error('Stop Highlite before exporting its bundle.');
     const zip = new JSZip();
     zip.file('manifest.json', JSON.stringify(this.#bundle.manifest, null, 2));
     zip.file('summary.md', this.#bundle.summary);
@@ -510,7 +510,7 @@ class Highlite implements HighliteController {
           : 'Microphone disabled.';
     this.#toolbar?.setStatus(
       this.#frameAvailable
-        ? `${micStatus} Approved display capture is available.`
+        ? `${micStatus} Approved screen sharing is available.`
         : `${micStatus} Visual evidence is unavailable.`,
     );
     this.#emit('recording-started', {
@@ -614,7 +614,7 @@ class Highlite implements HighliteController {
       this.#addWarning(`Visual evidence unavailable: ${safeMessage(error)}`);
       this.#emit('error', {
         error,
-        message: 'Display capture unavailable; recording continues without screenshots.',
+        message: 'Screen sharing unavailable; Highlite continues without screenshots.',
       });
     }
   }
@@ -657,7 +657,7 @@ class Highlite implements HighliteController {
     try {
       await this.#frameProvider?.stop();
     } catch (error) {
-      this.#addWarning(`Display capture cleanup failed: ${safeMessage(error)}`);
+      this.#addWarning(`Screen sharing cleanup failed: ${safeMessage(error)}`);
     }
   }
 
@@ -788,8 +788,8 @@ class Highlite implements HighliteController {
       });
       this.#keyframeOrder.set(id, order);
     } catch (error) {
-      this.#addWarning(`A requested keyframe could not be captured: ${safeMessage(error)}`);
-      this.#emit('error', { error, message: 'A screenshot candidate could not be captured.' });
+      this.#addWarning(`A requested keyframe could not be saved: ${safeMessage(error)}`);
+      this.#emit('error', { error, message: 'A screenshot candidate could not be saved.' });
     }
   }
 
@@ -927,7 +927,7 @@ class Highlite implements HighliteController {
     // change makes them stale, just like scrolling does.
     this.#toolbar?.clearAnnotations();
     if (this.#isDisabledRoute(location.pathname)) {
-      this.#addWarning('Capture stopped because the browser navigated to a disabled route.');
+      this.#addWarning('Highlite stopped because the browser navigated to a disabled route.');
       void this.cancel();
       return;
     }

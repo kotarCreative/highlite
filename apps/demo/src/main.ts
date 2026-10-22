@@ -68,7 +68,7 @@ const highlite = createHighlite({
         if (!image) continue;
         const figure = document.createElement('figure');
         const thumbnail = document.createElement('img');
-        thumbnail.alt = `Captured keyframe at ${Math.round(frame.atMs / 1000)} seconds`;
+        thumbnail.alt = `Highlite keyframe at ${Math.round(frame.atMs / 1000)} seconds`;
         thumbnail.src = URL.createObjectURL(image);
         const caption = document.createElement('figcaption');
         caption.textContent = `${frame.reason} · ${Math.round(frame.atMs / 1000)}s`;

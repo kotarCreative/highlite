@@ -61,16 +61,54 @@ try {
   await page.goto(`${baseUrl}/?access_token=must-not-be-exported`, {
     waitUntil: 'domcontentloaded',
   });
-  const launcher = page.getByRole('button', { name: 'Open Highlite capture tools' });
+  const launcher = page.getByRole('button', { name: 'Open Highlite tools' });
   await launcher.waitFor({ state: 'visible' });
   await launcher.click();
-  await page.getByRole('button', { name: 'Start capture' }).click();
+  await page.getByRole('button', { name: 'Start Highlite' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Allow microphone' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Share this tab' }).click();
-  await page.getByRole('button', { name: 'Capture a marked moment' }).waitFor({ state: 'visible' });
+  await page
+    .getByRole('button', { name: 'Mark a moment in Highlite' })
+    .waitFor({ state: 'visible' });
+  const dock = page.getByRole('toolbar', { name: 'Highlite session actions' });
+  const dockBox = await dock.boundingBox();
+  const viewport = page.viewportSize();
+  assert.ok(dockBox && viewport, 'The capture session dock must be visible while recording.');
+  assert.ok(
+    Math.abs(dockBox.x + dockBox.width / 2 - viewport.width / 2) < 2,
+    'The capture session dock must be centered horizontally.',
+  );
+  assert.ok(
+    Math.abs(dockBox.y + dockBox.height - (viewport.height - 24)) < 2,
+    'The capture session dock must sit above the bottom edge.',
+  );
+  const stopBox = await page.getByRole('button', { name: 'Stop Highlite' }).boundingBox();
+  assert.ok(
+    stopBox && Math.abs(dockBox.x + dockBox.width - (stopBox.x + stopBox.width)) < 10,
+    'The Stop action must sit at the far right of the dock.',
+  );
 
-  await page.getByRole('button', { name: 'Enter annotation mode' }).click();
-  await page.getByLabel('Annotation shape').selectOption('circle');
+  const circleTool = page.getByRole('button', { name: 'Circle annotation' });
+  const tooltipContent = await circleTool.evaluate(
+    (element) => getComputedStyle(element, '::after').content,
+  );
+  assert.ok(
+    tooltipContent.includes('drag to outline an area'),
+    'Annotation tools must explain what they do in a tooltip.',
+  );
+  await circleTool.hover();
+  await page.waitForTimeout(200);
+  assert.equal(
+    await circleTool.evaluate((element) => getComputedStyle(element, '::after').opacity),
+    '1',
+    'The annotation tooltip must appear on hover.',
+  );
+  await circleTool.click();
+  assert.equal(
+    await circleTool.getAttribute('aria-pressed'),
+    'true',
+    'The selected annotation tool must be marked as active.',
+  );
   const metric = await page.locator('.metric-card.featured').boundingBox();
   const canvas = await page.locator('canvas').boundingBox();
   assert.ok(metric && canvas, 'The metric and annotation canvas must be visible.');
@@ -92,7 +130,7 @@ try {
       return ink;
     });
   assert.ok((await countInkPixels()) > 0, 'The annotation must be visible when drawn.');
-  await page.getByRole('button', { name: 'Return to interact mode' }).click();
+  await page.getByRole('button', { name: 'Interact with page' }).click();
   await page.waitForTimeout(4_500);
   assert.equal(
     await countInkPixels(),
@@ -104,8 +142,8 @@ try {
   await page.locator('#date-range').click();
   await page.locator('#date-range').selectOption('7');
   assert.equal(await page.locator('#retention-value').textContent(), '108%');
-  await page.getByRole('button', { name: 'Capture a marked moment' }).click();
-  await page.getByRole('button', { name: 'Stop capture' }).click();
+  await page.getByRole('button', { name: 'Mark a moment in Highlite' }).click();
+  await page.getByRole('button', { name: 'Stop Highlite' }).click();
   await page.locator('#preview-result').waitFor({ state: 'visible' });
 
   const manifest = JSON.parse((await page.locator('#manifest-preview').textContent()) ?? '{}');
@@ -141,7 +179,7 @@ try {
 
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.getByRole('button', { name: 'Download the capture bundle' }).click(),
+    page.getByRole('button', { name: 'Download the Highlite bundle' }).click(),
   ]);
   const archivePath = await download.path();
   assert.ok(archivePath, 'The ZIP export should produce a downloadable archive.');
@@ -216,8 +254,8 @@ try {
   });
   const audioPage = await audioContext.newPage();
   await audioPage.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  await audioPage.getByRole('button', { name: 'Open Highlite capture tools' }).click();
-  await audioPage.getByRole('button', { name: 'Start capture' }).click();
+  await audioPage.getByRole('button', { name: 'Open Highlite tools' }).click();
+  await audioPage.getByRole('button', { name: 'Start Highlite' }).click();
   assert.equal(
     await audioPage.getByRole('dialog').getByRole('button', { name: 'Allow microphone' }).count(),
     0,
@@ -226,7 +264,7 @@ try {
   await audioPage.getByRole('dialog').getByRole('button', { name: 'Share this tab' }).click();
   await audioPage.getByRole('status').filter({ hasText: 'Microphone on.' }).waitFor();
   await audioPage.waitForTimeout(1200);
-  await audioPage.getByRole('button', { name: 'Stop capture' }).click();
+  await audioPage.getByRole('button', { name: 'Stop Highlite' }).click();
   await audioPage.locator('#preview-result').waitFor({ state: 'visible' });
   const audioManifest = JSON.parse(
     (await audioPage.locator('#manifest-preview').textContent()) ?? '{}',
@@ -261,16 +299,16 @@ try {
   });
   const cancelPage = await pendingContext.newPage();
   await cancelPage.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  await cancelPage.getByRole('button', { name: 'Open Highlite capture tools' }).click();
-  await cancelPage.getByRole('button', { name: 'Start capture' }).click();
+  await cancelPage.getByRole('button', { name: 'Open Highlite tools' }).click();
+  await cancelPage.getByRole('button', { name: 'Start Highlite' }).click();
   await cancelPage.getByRole('dialog').getByRole('button', { name: 'Allow microphone' }).click();
   await cancelPage
     .getByRole('dialog')
-    .getByRole('button', { name: 'Cancel capture and discard' })
+    .getByRole('button', { name: 'Cancel Highlite and discard' })
     .click();
   await cancelPage
     .getByRole('status')
-    .filter({ hasText: 'Capture discarded. No bundle was created.' })
+    .filter({ hasText: 'Highlite session discarded. No bundle was created.' })
     .waitFor();
   assert.equal(await cancelPage.locator('#preview-result').isVisible(), false);
   await cancelPage.evaluate(() => {
@@ -280,10 +318,62 @@ try {
   });
   await cancelPage.waitForFunction(() => window.__microphoneTrackStopped === true);
 
+  const discardContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await discardContext.addInitScript(() => {
+    Object.defineProperty(navigator, 'permissions', {
+      configurable: true,
+      value: { query: async () => ({ state: 'prompt' }) },
+    });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          throw new DOMException('Permission denied by smoke test.', 'NotAllowedError');
+        },
+        getDisplayMedia: async () => {
+          throw new DOMException('Permission denied by smoke test.', 'NotAllowedError');
+        },
+      },
+    });
+  });
+  const discardPage = await discardContext.newPage();
+  await discardPage.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+  await discardPage.getByRole('button', { name: 'Open Highlite tools' }).click();
+  await discardPage.getByRole('button', { name: 'Start Highlite' }).click();
+  await discardPage
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Continue without audio' })
+    .click();
+  await discardPage
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Continue without screenshots' })
+    .click();
+  await discardPage.getByRole('button', { name: 'Mark a moment in Highlite' }).waitFor();
+
+  const discardDialog = discardPage.getByRole('dialog');
+  const discardButton = discardPage.getByRole('button', { name: 'Discard Highlite session' });
+  await discardButton.click();
+  await discardDialog.getByRole('heading', { name: 'Discard this Highlite session?' }).waitFor();
+  await discardDialog.getByRole('button', { name: 'Keep recording' }).click();
+  assert.equal(
+    await discardDialog.isVisible(),
+    false,
+    'Keeping the capture must close the discard confirmation.',
+  );
+  await discardPage.getByRole('button', { name: 'Mark a moment in Highlite' }).waitFor();
+  await discardButton.click();
+  await discardDialog.getByRole('button', { name: 'Discard Highlite session' }).click();
+  await discardPage
+    .getByRole('status')
+    .filter({ hasText: 'Highlite session discarded. No bundle was created.' })
+    .waitFor();
+  assert.equal(await discardPage.locator('#preview-result').isVisible(), false);
+  await discardContext.close();
+
   await context.close();
   await pendingContext.close();
   process.stdout.write(
-    'Browser smoke passed: ESM/IIFE builds, audio, frames, annotations, interactions, export, and cancel.\n',
+    'Browser smoke passed: ESM/IIFE builds, audio, frames, annotations, tooltips, interactions, export, discard confirmation, and cancel.\n',
   );
 } finally {
   await browser?.close();

@@ -21,7 +21,7 @@ export class DisplayMediaFrameProvider implements FrameProvider {
   async start(): Promise<void> {
     const getDisplayMedia = navigator.mediaDevices?.getDisplayMedia?.bind(navigator.mediaDevices);
     if (!getDisplayMedia) {
-      throw new Error('Display capture is not supported by this browser.');
+      throw new Error('Screen sharing is not supported by this browser.');
     }
 
     const options: CurrentTabDisplayOptions = {
