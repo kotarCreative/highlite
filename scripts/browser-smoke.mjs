@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
 import { fileURLToPath } from 'node:url';
@@ -266,6 +267,48 @@ try {
   );
   assert.deepEqual(pageErrors, [], `Unexpected browser errors: ${pageErrors.join(', ')}`);
 
+  const relayRequests = [];
+  const relay = createHttpServer(async (request, response) => {
+    const origin = request.headers.origin ?? '*';
+    const cors = {
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    };
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204, cors);
+      response.end();
+      return;
+    }
+    if (request.method !== 'POST' || request.url !== '/v1/sessions') {
+      response.writeHead(404, cors);
+      response.end();
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = Buffer.concat(chunks);
+    relayRequests.push({
+      authorization: request.headers.authorization,
+      contentType: request.headers['content-type'],
+      zip: body.subarray(0, 2).toString(),
+      bytes: body.length,
+    });
+    response.writeHead(201, { ...cors, 'Content-Type': 'application/json' });
+    response.end(
+      JSON.stringify({
+        sessionId: `relay-${relayRequests.length}`,
+        status: 'ready',
+        statusUrl: `/v1/sessions/relay-${relayRequests.length}`,
+        bundleUrl: `/v1/sessions/relay-${relayRequests.length}/bundle.zip`,
+      }),
+    );
+  });
+  await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve));
+  const relayAddress = relay.address();
+  assert.ok(relayAddress && typeof relayAddress === 'object');
+  const relayEndpoint = `http://127.0.0.1:${relayAddress.port}/v1/sessions`;
+
   const iifePage = await context.newPage();
   await iifePage.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await iifePage.addScriptTag({
@@ -276,7 +319,7 @@ try {
     'function',
     'The IIFE build should expose the documented global namespace.',
   );
-  await iifePage.evaluate(async () => {
+  await iifePage.evaluate(async (endpoint) => {
     const frameProvider = {
       async start() {},
       async capture() {
@@ -294,6 +337,7 @@ try {
       ui: 'headless',
       capture: { microphone: false, frames: 'none', interactions: false },
       frameProvider,
+      relay: { endpoint, token: 'ingest-test' },
       onComplete: (bundle) => (window.__iifeBundles ??= []).push(bundle),
     });
     await capture.start();
@@ -303,7 +347,7 @@ try {
     await capture.mark('IIFE second session');
     await capture.stop();
     await capture.destroy();
-  });
+  }, relayEndpoint);
   const iifeBundles = await iifePage.evaluate(() =>
     (window.__iifeBundles ?? []).map((bundle) => ({
       manifest: bundle.manifest,
@@ -332,6 +376,19 @@ try {
       'Each session must keep only its own timeline events.',
     );
   }
+
+  assert.equal(
+    relayRequests.length,
+    2,
+    'Each completed session must be posted to the configured relay.',
+  );
+  for (const request of relayRequests) {
+    assert.equal(request.authorization, 'Bearer ingest-test');
+    assert.equal(request.contentType, 'application/zip');
+    assert.equal(request.zip, 'PK', 'The relay must receive a ZIP archive.');
+    assert.ok(request.bytes > 0, 'The relay upload must not be empty.');
+  }
+  await new Promise((resolve) => relay.close(resolve));
 
   const audioContext = await browser.newContext({
     permissions: ['microphone'],

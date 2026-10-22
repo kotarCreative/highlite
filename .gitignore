@@ -4,6 +4,8 @@ target/
 coverage/
 playwright-report/
 test-results/
+highlite-relay-data/
+relay.env
 .DS_Store
 .env
 .env.*

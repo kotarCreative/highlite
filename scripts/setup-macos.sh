@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Set up a local Highlite capture → Parakeet → bundle workflow on macOS.
+# Set up a local Highlite capture → Parakeet → bundle and relay workflow on macOS.
 #
 #   bash scripts/setup-macos.sh [--install-prereqs] [--verify] [--skip-build]
 #                               [--model 110m|0.6b] [--force]
@@ -36,7 +36,7 @@ usage() {
 Usage: bash scripts/setup-macos.sh [options]
 
 Options:
-  --install-prereqs   Install missing Homebrew packages (node, ffmpeg, pnpm)
+  --install-prereqs   Install missing Homebrew packages (node, ffmpeg, pnpm, cmake)
                       and Rust via rustup. Homebrew itself must already exist.
   --verify            Run scripts/parakeet-e2e.mjs after setup.
   --skip-build        Do not run pnpm install/build.
@@ -111,6 +111,7 @@ if [[ "$INSTALL_PREREQS" -eq 1 ]]; then
   command -v node >/dev/null 2>&1 || missing+=("node")
   command -v ffmpeg >/dev/null 2>&1 || missing+=("ffmpeg")
   command -v pnpm >/dev/null 2>&1 || missing+=("pnpm")
+  command -v cmake >/dev/null 2>&1 || missing+=("cmake")
   if [[ ${#missing[@]} -gt 0 ]]; then
     info "Installing Homebrew packages: ${missing[*]}"
     brew install "${missing[@]}"
@@ -133,6 +134,7 @@ command -v node >/dev/null 2>&1 || die "node is missing; re-run with --install-p
 command -v pnpm >/dev/null 2>&1 || die "pnpm is missing; re-run with --install-prereqs"
 command -v cargo >/dev/null 2>&1 || die "cargo is missing; re-run with --install-prereqs"
 command -v ffmpeg >/dev/null 2>&1 || die "ffmpeg is missing; re-run with --install-prereqs"
+command -v cmake >/dev/null 2>&1 || die "cmake is missing; re-run with --install-prereqs"
 
 node_major="$(node -p 'process.versions.node.split(".")[0]')"
 if [[ "$node_major" -lt 22 ]]; then
@@ -199,12 +201,15 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   info "Building the SDK"
   (cd "$REPO_ROOT" && pnpm build)
 
-  info "Building the compiler"
+  info "Building the compiler and relay"
   (cd "$REPO_ROOT" && pnpm build:rust)
 fi
 
 compiler="$REPO_ROOT/target/release/highlite-compiler"
 [[ -x "$compiler" ]] || die "the compiler was not built at $compiler"
+relay="$REPO_ROOT/target/release/highlite-relay"
+[[ -x "$relay" ]] || die "the relay was not built at $relay"
+"$relay" --help >/dev/null || die "the relay binary could not start at $relay"
 
 if [[ "$VERIFY" -eq 1 ]]; then
   info "Running the Parakeet e2e"
@@ -224,6 +229,7 @@ Setup complete.
   parakeet-cli : $PARAKEET_BIN_DIR/parakeet-cli
   model ($MODEL_LABEL) : $model_path
   compiler     : $compiler
+  relay        : $relay
   SDK asset    : $REPO_ROOT/packages/sdk/dist/highlite.iife.js
 
 Run the local ASR e2e:
@@ -244,4 +250,13 @@ Capture in another project:
          --parakeet-model "$model_path"
 
 The bundle's summary.md, contact-sheet.png, and frames/ are ready for an agent.
+
+Run the relay (create the env file once and replace the tokens and hosts):
+
+  cp "$REPO_ROOT/crates/highlite-relay/relay.env.example" "$REPO_ROOT/relay.env"
+  chmod 600 "$REPO_ROOT/relay.env"
+  pnpm relay -- --env-file "$REPO_ROOT/relay.env"
+
+The relay compiles uploaded sessions into the same bundle layout and can POST
+signed completion webhooks; configure it entirely through relay.env.
 EOF

@@ -4,7 +4,7 @@ Highlite is an embeddable browser SDK for capturing narrated, visually contextua
 
 ## Status
 
-The repository is being built in milestones. The current slice includes the typed timeline, a floating Shadow DOM toolbar with one-at-a-time permission prompts, microphone and permission-based frame capture, click/scroll/SPA-route context, DOM targets, four annotation tools that fade after two seconds, deterministic Markdown, ZIP export, and an interactive analytics demo. The canonical compiler is the Rust crate [`crates/highlite-compiler`](crates/highlite-compiler); it selects keyframes, aligns narration by clause, plans DOM-target crops, transcribes audio in the compile step, burns annotations into cropped frames, renders a contact sheet, and writes an agent bundle next to the handoff summary. It is checked against shared golden fixtures in [`fixtures/`](fixtures). See [the implementation notes](docs/implementation-notes.md) for browser constraints and progress.
+The repository is being built in milestones. The current slice includes the typed timeline, a floating Shadow DOM toolbar with one-at-a-time permission prompts, microphone and permission-based frame capture, click/scroll/SPA-route context, DOM targets, four annotation tools that fade after two seconds, deterministic Markdown, ZIP export, an authenticated relay that compiles uploads, and an interactive analytics demo. The canonical compiler is the Rust crate [`crates/highlite-compiler`](crates/highlite-compiler); it selects keyframes, aligns narration by clause, plans DOM-target crops, transcribes audio in the compile step, burns annotations into cropped frames, renders a contact sheet, and writes an agent bundle next to the handoff summary. It is checked against shared golden fixtures in [`fixtures/`](fixtures). See [the implementation notes](docs/implementation-notes.md) for browser constraints and progress.
 
 ## Development
 
@@ -15,6 +15,7 @@ Requires Node.js 22 or newer, pnpm 12, and a Rust toolchain with Cargo. Install 
 - `pnpm build` — build workspace packages in dependency order
 - `pnpm build:rust` — build the compiler CLI in release mode
 - `pnpm bundle <capture-dir> --out <bundle-dir>` — transcribe, render, and write an agent bundle
+- `pnpm relay -- --env-file ./relay.env` — run the authenticated relay that accepts and compiles session ZIPs
 - `pnpm test:e2e` — build and run the browser smoke test, then the SDK → Rust compiler e2e (`CHROMIUM_PATH` can override `/usr/bin/chromium`)
 - `pnpm test:compiler:e2e` — build the SDK and compiler, then compile a real browser capture through the Rust CLI
 - `pnpm test:parakeet` — opt-in: run a real Parakeet transcription through `bundle` (see below)
@@ -47,9 +48,9 @@ The bundle contains `summary.md`, `contact-sheet.png`, `frames/frame-XX.png`,
 
 ### macOS setup
 
-On Apple Silicon, the setup script installs the missing Homebrew/Rust prerequisites,
-builds the SDK and compiler, downloads `parakeet-cli` and an English Parakeet model,
-and optionally runs the real ASR e2e:
+On macOS, the setup script installs missing Homebrew/Rust prerequisites (including
+`cmake` for the relay's TLS stack), builds the SDK, compiler, and relay, downloads
+`parakeet-cli` and an English Parakeet model, and optionally runs the real ASR e2e:
 
 ```sh
 bash scripts/setup-macos.sh --install-prereqs --verify
@@ -119,6 +120,48 @@ For a script-tag integration, serve that built file from your own static asset h
 ```
 
 The asset URL above is an example path, not a published CDN endpoint.
+
+## Relay server
+
+`crates/highlite-relay` accepts a session ZIP, compiles it with the canonical compiler,
+and exposes the resulting bundle instead of requiring a browser download. It separates
+ingest and read bearer tokens, checks optional `Host`/`Origin` allowlists, bounds upload
+and extraction sizes, rejects unsafe ZIP paths, and limits compile concurrency.
+
+```sh
+cp crates/highlite-relay/relay.env.example relay.env
+chmod 600 relay.env
+# edit relay.env
+pnpm relay -- --env-file ./relay.env
+```
+
+All settings live in the env file. `--env-file` can be repeated, process environment
+variables override the file, and `--bind` / `--data-dir` remain as operational
+overrides. Compiler behavior is env-backed too: keyframe budget and gaps, crop and
+coverage selection, spoken cues, annotation burning, and contact-sheet output.
+
+Point the SDK at the ingest endpoint:
+
+```ts
+const capture = createHighlite({
+  relay: {
+    endpoint: 'https://relay.example.com/v1/sessions',
+    token: import.meta.env.VITE_HIGHLITE_INGEST_TOKEN,
+  },
+});
+```
+
+The uploaded ZIP is compiled synchronously. `POST /v1/sessions` returns the session
+metadata; `GET /v1/sessions/{id}` returns status and summary; and
+`GET /v1/sessions/{id}/bundle.zip` serves the compiled bundle. Read endpoints require
+the read token and are intentionally not exposed to the browser. Set
+`HIGHLITE_RELAY_WEBHOOK_URL` and `HIGHLITE_RELAY_WEBHOOK_SECRET` to send signed
+`session.ready` / `session.failed` webhooks to a consumer, or poll the status endpoint
+instead. See the [relay README](crates/highlite-relay/README.md) for payloads, signature
+verification, and deployment details.
+
+The demo reads `VITE_HIGHLITE_RELAY_URL` and `VITE_HIGHLITE_RELAY_TOKEN` from `.env`
+(copy `.env.example`) and uploads automatically when they are set.
 
 Run `pnpm dev` and open the demo to try the analytics walkthrough. Its local preview shows the exact manifest and summary assembled by the SDK; it does not upload captures.
 

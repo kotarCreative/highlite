@@ -21,6 +21,7 @@
     "check:rust": "pnpm rust:fmt && pnpm rust:lint && pnpm rust:test",
     "build:rust": "cargo build --workspace --release",
     "bundle": "cargo run -p highlite-compiler -- bundle",
+    "relay": "cargo run -p highlite-relay --",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:rust"
   },
   "devDependencies": {

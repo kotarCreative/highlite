@@ -1,0 +1,37 @@
+[package]
+name = "highlite-relay"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Authenticated relay that accepts Highlite capture bundles and compiles them"
+
+[[bin]]
+name = "highlite-relay"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+bytes = "1"
+dotenvy = "0.15"
+highlite-compiler = { path = "../highlite-compiler" }
+hmac = "0.13"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+subtle = "2"
+tokio = { version = "1", features = [
+  "macros",
+  "rt-multi-thread",
+  "net",
+  "fs",
+  "signal",
+  "sync",
+  "time",
+] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

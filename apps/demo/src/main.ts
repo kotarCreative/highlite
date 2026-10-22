@@ -52,6 +52,16 @@ const highlite = createHighlite({
     redactSelectors: ['[data-private]', '[data-highlite-private]', 'input[type="password"]'],
     disableSelectors: ['[data-highlite-ignore]'],
   },
+  ...(import.meta.env.VITE_HIGHLITE_RELAY_URL
+    ? {
+        relay: {
+          endpoint: import.meta.env.VITE_HIGHLITE_RELAY_URL,
+          ...(import.meta.env.VITE_HIGHLITE_RELAY_TOKEN
+            ? { token: import.meta.env.VITE_HIGHLITE_RELAY_TOKEN }
+            : {}),
+        },
+      }
+    : {}),
   onComplete: (bundle) => {
     if (previewEmpty) previewEmpty.hidden = true;
     if (previewResult) previewResult.hidden = false;

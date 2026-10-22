@@ -150,7 +150,7 @@ segments through `shift_transcript`.
 - Every annotation on screen when a frame was captured is attached to its keyframe and
   drawn in the cropped coordinate space. Stroke widths use the recorded CSS width scaled
   to the captured pixels, so lines keep the weight the user drew.
-- Annotations hold for four seconds, then fade out. Keyframes captured while a stroke is
+- Annotations hold for the fade delay recorded in the manifest (two seconds by default in the SDK), then fade out. Keyframes captured while a stroke is
   still on screen burn it at full opacity so the evidence stays readable; fully faded
   strokes are left out.
 - Scrolling or a route change clears annotations immediately, matching the SDK overlay.

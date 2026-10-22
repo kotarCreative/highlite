@@ -49,10 +49,30 @@ export interface HighliteOptions {
     disableSelectors?: string[];
     includeQueryString?: boolean;
   };
+  relay?: RelayOptions;
   frameProvider?: FrameProvider;
   processor?: Processor;
   clock?: MonotonicClock;
   onComplete?: (bundle: HighliteBundle) => void | Promise<void>;
+}
+
+export interface RelayOptions {
+  /** Full URL of the relay ingest endpoint, for example https://relay.example.com/v1/sessions. */
+  endpoint: string;
+  /** Bearer token. Treat this as a browser-visible ingest capability. */
+  token?: string;
+  /** Upload automatically after a session stops. Defaults to true when relay is configured. */
+  autoUpload?: boolean;
+  /** Abort an upload after this many milliseconds. Defaults to 120000. */
+  timeoutMs?: number;
+}
+
+export interface RelayUploadResult {
+  sessionId: string;
+  status: string;
+  statusUrl?: string;
+  bundleUrl?: string;
+  summary?: string;
 }
 
 export interface HighliteEvents {
@@ -64,6 +84,8 @@ export interface HighliteEvents {
   'recording-stopped': { durationMs: number };
   'processing-started': { sessionId: string };
   'processing-complete': { bundle: HighliteBundle };
+  'relay-uploaded': { result: RelayUploadResult };
+  'relay-failed': { error: unknown; message: string };
   error: { error: unknown; message: string };
   cancelled: { sessionId: string };
 }
@@ -83,6 +105,7 @@ export interface HighliteController {
   on<K extends HighliteEventName>(event: K, handler: HighliteEventHandler<K>): this;
   off<K extends HighliteEventName>(event: K, handler: HighliteEventHandler<K>): this;
   export(options?: { download?: boolean }): Promise<Blob>;
+  upload(): Promise<RelayUploadResult>;
   destroy(): Promise<void>;
 }
 
@@ -142,6 +165,10 @@ function createId(): string {
 
 function safeMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'An unknown Highlite error occurred.';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function textExcerpt(value: string | null | undefined): string | undefined {
@@ -404,6 +431,19 @@ class Highlite implements HighliteController {
     } catch (error) {
       this.#reportError(error, 'The onComplete callback failed.');
     }
+
+    if (this.#options.relay && this.#options.relay.autoUpload !== false) {
+      this.#toolbar?.setStatus('Sending the Highlite session to the relay…');
+      try {
+        const result = await this.upload();
+        this.#toolbar?.setStatus(`Highlite session sent to the relay (${result.status}).`);
+        this.#emit('relay-uploaded', { result });
+      } catch (error) {
+        const message = safeMessage(error);
+        this.#toolbar?.setStatus(`Highlite session saved locally. ${message}`);
+        this.#emit('relay-failed', { error, message });
+      }
+    }
     return bundle;
   }
 
@@ -473,14 +513,7 @@ class Highlite implements HighliteController {
 
   async export(options: { download?: boolean } = {}): Promise<Blob> {
     if (!this.#bundle) throw new Error('Stop Highlite before exporting its bundle.');
-    const zip = new JSZip();
-    zip.file('manifest.json', JSON.stringify(this.#bundle.manifest, null, 2));
-    zip.file('summary.md', this.#bundle.summary);
-    zip.file('web/interactions.json', JSON.stringify(this.#bundle.manifest.timeline, null, 2));
-    zip.file('web/targets.json', JSON.stringify(this.#bundle.manifest.targets, null, 2));
-    zip.file('web/annotations.json', JSON.stringify(this.#bundle.manifest.annotations, null, 2));
-    for (const [path, blob] of Object.entries(this.#bundle.files)) zip.file(path, blob);
-    const archive = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    const archive = await this.#createArchive(this.#bundle);
 
     if (options.download !== false) {
       const url = URL.createObjectURL(archive);
@@ -494,6 +527,75 @@ class Highlite implements HighliteController {
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
     return archive;
+  }
+
+  async upload(): Promise<RelayUploadResult> {
+    const relay = this.#options.relay;
+    if (!relay?.endpoint) throw new Error('Configure relay.endpoint before uploading a session.');
+    if (!this.#bundle) throw new Error('Stop Highlite before uploading its bundle.');
+
+    const archive = await this.#createArchive(this.#bundle);
+    const controller = typeof AbortController === 'undefined' ? undefined : new AbortController();
+    const timeout = controller
+      ? window.setTimeout(() => controller.abort(), relay.timeoutMs ?? 120_000)
+      : undefined;
+
+    try {
+      const response = await fetch(relay.endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/zip',
+          ...(relay.token ? { Authorization: `Bearer ${relay.token}` } : {}),
+        },
+        body: archive,
+        mode: 'cors',
+        credentials: 'omit',
+        redirect: 'error',
+        cache: 'no-store',
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      const text = await response.text();
+      let payload: unknown = {};
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        payload = {};
+      }
+      if (!response.ok) {
+        const message =
+          isRecord(payload) && typeof payload.error === 'string'
+            ? payload.error
+            : `HTTP ${response.status}`;
+        throw new Error(`Relay upload failed: ${message}`);
+      }
+      if (
+        !isRecord(payload) ||
+        typeof payload.sessionId !== 'string' ||
+        typeof payload.status !== 'string'
+      ) {
+        throw new Error('Relay upload failed: the relay returned an unexpected response.');
+      }
+      return {
+        sessionId: payload.sessionId,
+        status: payload.status,
+        ...(typeof payload.statusUrl === 'string' ? { statusUrl: payload.statusUrl } : {}),
+        ...(typeof payload.bundleUrl === 'string' ? { bundleUrl: payload.bundleUrl } : {}),
+        ...(typeof payload.summary === 'string' ? { summary: payload.summary } : {}),
+      };
+    } finally {
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    }
+  }
+
+  async #createArchive(bundle: HighliteBundle): Promise<Blob> {
+    const zip = new JSZip();
+    zip.file('manifest.json', JSON.stringify(bundle.manifest, null, 2));
+    zip.file('summary.md', bundle.summary);
+    zip.file('web/interactions.json', JSON.stringify(bundle.manifest.timeline, null, 2));
+    zip.file('web/targets.json', JSON.stringify(bundle.manifest.targets, null, 2));
+    zip.file('web/annotations.json', JSON.stringify(bundle.manifest.annotations, null, 2));
+    for (const [path, blob] of Object.entries(bundle.files)) zip.file(path, blob);
+    return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
   }
 
   async destroy(): Promise<void> {
