@@ -124,21 +124,21 @@ Run `pnpm dev` and open the demo to try the analytics walkthrough. Its local pre
 
 ## Keyboard shortcuts
 
-While a Highlite session is recording, hold **Meta** (⌘ on macOS, the Windows/Super key on Windows and Linux) and press one of these keys. Requiring Meta means ordinary typing never triggers a session action. Shortcuts are ignored inside inputs, textareas, selects, and contenteditable fields.
+While a Highlite session is recording, hold **Ctrl** (Control on macOS) and press one of these keys. Requiring Ctrl means ordinary typing never triggers a session action. Shortcuts are ignored inside inputs, textareas, selects, and contenteditable fields.
 
 | Key      | Action                                                  |
 | -------- | ------------------------------------------------------- |
-| `Meta+V` | Interact with the page                                  |
-| `Meta+F` | Freehand annotation                                     |
-| `Meta+C` | Circle annotation                                       |
-| `Meta+A` | Arrow annotation                                        |
-| `Meta+H` | Highlight annotation                                    |
-| `Meta+M` | Mark the current moment                                 |
-| `Meta+D` | Discard the Highlite session (asks for confirmation)    |
-| `Meta+S` | Stop and assemble the bundle                            |
+| `Ctrl+V` | Interact with the page                                  |
+| `Ctrl+F` | Freehand annotation                                     |
+| `Ctrl+C` | Circle annotation                                       |
+| `Ctrl+A` | Arrow annotation                                        |
+| `Ctrl+H` | Highlight annotation                                    |
+| `Ctrl+M` | Mark the current moment                                 |
+| `Ctrl+D` | Discard the Highlite session (asks for confirmation)    |
+| `Ctrl+S` | Stop and assemble the bundle                            |
 | `Esc`    | Leave annotation mode or close the discard confirmation |
 
-`Esc` does not require a modifier. Note that some Meta combinations overlap browser shortcuts (copy, find, save, bookmark), which Highlite consumes while a session is recording.
+`Esc` does not require a modifier. Note that several Ctrl combinations overlap browser shortcuts (copy, select all, find, save, bookmark, history), which Highlite consumes while a session is recording; browser-reserved ones such as Ctrl+H History may never reach the page.
 
 ## Capture limitations
 

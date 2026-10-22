@@ -89,12 +89,12 @@ try {
   );
 
   const circleTool = page.getByRole('button', { name: 'Circle annotation' });
-  assert.equal(await circleTool.getAttribute('aria-keyshortcuts'), 'Meta+C');
+  assert.equal(await circleTool.getAttribute('aria-keyshortcuts'), 'Control+C');
   await page.keyboard.press('c');
   assert.equal(
     await circleTool.getAttribute('aria-pressed'),
     'false',
-    'Session shortcuts must require the Meta key.',
+    'Session shortcuts must require the Control key.',
   );
   for (const [key, label] of [
     ['f', 'Freehand annotation'],
@@ -102,18 +102,18 @@ try {
     ['a', 'Arrow annotation'],
     ['h', 'Highlight annotation'],
   ]) {
-    await page.keyboard.press(`Meta+${key}`);
+    await page.keyboard.press(`Control+${key}`);
     assert.equal(
       await page.getByRole('button', { name: label }).getAttribute('aria-pressed'),
       'true',
-      `The Meta+${key.toUpperCase()} shortcut must select the ${label}.`,
+      `The Control+${key.toUpperCase()} shortcut must select the ${label}.`,
     );
   }
-  await page.keyboard.press('Meta+v');
+  await page.keyboard.press('Control+v');
   assert.equal(
     await circleTool.getAttribute('aria-pressed'),
     'false',
-    'The Meta+V shortcut must return to interact mode.',
+    'The Control+V shortcut must return to interact mode.',
   );
 
   const tooltipContent = await circleTool.evaluate(
@@ -174,15 +174,15 @@ try {
   await page.locator('#date-range').click();
   await page.locator('#date-range').selectOption('7');
   assert.equal(await page.locator('#retention-value').textContent(), '108%');
-  await page.keyboard.press('Meta+f');
+  await page.keyboard.press('Control+f');
   assert.equal(
     await page.getByRole('button', { name: 'Freehand annotation' }).getAttribute('aria-pressed'),
     'false',
     'Shortcuts must not fire while typing in a page field.',
   );
   await page.locator('#page-title').click();
-  await page.keyboard.press('Meta+m');
-  await page.keyboard.press('Meta+s');
+  await page.keyboard.press('Control+m');
+  await page.keyboard.press('Control+s');
   await page.locator('#preview-result').waitFor({ state: 'visible' });
 
   const manifest = JSON.parse((await page.locator('#manifest-preview').textContent()) ?? '{}');
@@ -400,7 +400,7 @@ try {
     'Keeping the capture must close the discard confirmation.',
   );
   await discardPage.getByRole('button', { name: 'Mark a moment in Highlite' }).waitFor();
-  await discardPage.keyboard.press('Meta+d');
+  await discardPage.keyboard.press('Control+d');
   await discardDialog.getByRole('heading', { name: 'Discard this Highlite session?' }).waitFor();
   await discardPage.keyboard.press('Escape');
   assert.equal(
@@ -408,7 +408,7 @@ try {
     false,
     'Escape must close the discard confirmation.',
   );
-  await discardPage.keyboard.press('Meta+d');
+  await discardPage.keyboard.press('Control+d');
   await discardDialog.getByRole('heading', { name: 'Discard this Highlite session?' }).waitFor();
   await discardDialog.getByRole('button', { name: 'Discard Highlite session' }).click();
   await discardPage
