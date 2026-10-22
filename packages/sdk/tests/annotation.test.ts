@@ -60,8 +60,8 @@ describe('annotation points', () => {
     ]);
   });
 
-  it('keeps annotations opaque for four seconds before fading them out', () => {
-    expect(ANNOTATION_FADE_AFTER_MS).toBe(4_000);
+  it('keeps annotations opaque for two seconds before fading them out', () => {
+    expect(ANNOTATION_FADE_AFTER_MS).toBe(2_000);
     expect(annotationOpacity(0)).toBe(1);
     expect(annotationOpacity(ANNOTATION_FADE_AFTER_MS)).toBe(1);
     expect(annotationOpacity(ANNOTATION_FADE_AFTER_MS + ANNOTATION_FADE_DURATION_MS / 2)).toBe(0.5);

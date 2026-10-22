@@ -65,6 +65,14 @@ try {
   await launcher.waitFor({ state: 'visible' });
   await launcher.click();
   await page.getByRole('button', { name: 'Start Highlite' }).click();
+  assert.ok(
+    await page.getByRole('button', { name: 'Freehand annotation' }).isVisible(),
+    'Session controls must stay visible while permissions are granted.',
+  );
+  assert.ok(
+    await page.getByRole('button', { name: 'Stop Highlite' }).isVisible(),
+    'The Stop control must stay visible while permissions are granted.',
+  );
   await page.getByRole('dialog').getByRole('button', { name: 'Allow microphone' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Share this tab' }).click();
   await page
@@ -163,11 +171,11 @@ try {
     'false',
     'Escape must leave annotation mode.',
   );
-  await page.waitForTimeout(4_500);
+  await page.waitForTimeout(2_600);
   assert.equal(
     await countInkPixels(),
     0,
-    'Annotations must fade off the overlay after four seconds.',
+    'Annotations must fade off the overlay after two seconds.',
   );
 
   await page.locator('.metric-card.featured').click();
@@ -197,7 +205,7 @@ try {
   const annotation = manifest.annotations.find((entry) => entry.kind === 'circle');
   assert.ok(annotation, 'The circle annotation must be in the manifest.');
   assert.equal(annotation.strokeWidth, 4, 'Annotations must record their CSS stroke width.');
-  assert.equal(annotation.fadeAfterMs, 4_000, 'Annotations must record the fade delay.');
+  assert.equal(annotation.fadeAfterMs, 2_000, 'Annotations must record the fade delay.');
   assert.equal(annotation.fadeDurationMs, 400, 'Annotations must record the fade duration.');
   assert.ok(annotation.points.length >= 2, 'Annotations must keep the drawn points.');
   assert.ok(manifest.targets.some((target) => target.metadata?.id === 'metric.net-retention'));
@@ -229,6 +237,35 @@ try {
     'The exported artifact should be a ZIP file.',
   );
 
+  await page.getByRole('button', { name: 'Start Highlite' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Allow microphone' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Share this tab' }).click();
+  await page.getByRole('button', { name: 'Stop Highlite' }).waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Stop Highlite' }).click();
+  await page.waitForFunction((previousSessionId) => {
+    const text = document.querySelector('#manifest-preview')?.textContent;
+    if (!text) return false;
+    try {
+      return JSON.parse(text).sessionId !== previousSessionId;
+    } catch {
+      return false;
+    }
+  }, manifest.sessionId);
+  const secondManifest = JSON.parse(
+    (await page.locator('#manifest-preview').textContent()) ?? '{}',
+  );
+  assert.notEqual(
+    secondManifest.sessionId,
+    manifest.sessionId,
+    'Recording again from the floating tray must start a fresh session.',
+  );
+  assert.equal(
+    secondManifest.timeline.filter((event) => event.kind === 'annotation').length,
+    0,
+    'A new session must not inherit annotations from the previous one.',
+  );
+  assert.deepEqual(pageErrors, [], `Unexpected browser errors: ${pageErrors.join(', ')}`);
+
   const iifePage = await context.newPage();
   await iifePage.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await iifePage.addScriptTag({
@@ -257,23 +294,44 @@ try {
       ui: 'headless',
       capture: { microphone: false, frames: 'none', interactions: false },
       frameProvider,
-      onComplete: (bundle) => (window.__iifeBundle = bundle),
+      onComplete: (bundle) => (window.__iifeBundles ??= []).push(bundle),
     });
     await capture.start();
-    await capture.mark('IIFE checkpoint');
+    await capture.mark('IIFE first session');
+    await capture.stop();
+    await capture.start();
+    await capture.mark('IIFE second session');
     await capture.stop();
     await capture.destroy();
   });
-  const iifeBundle = await iifePage.evaluate(() => ({
-    manifest: window.__iifeBundle.manifest,
-    filePaths: Object.keys(window.__iifeBundle.files),
-  }));
-  assert.equal(iifeBundle.manifest.keyframes.length, 2);
-  assert.deepEqual(
-    iifeBundle.manifest.keyframes.map((frame) => frame.imagePath),
-    ['frames/0001.png', 'frames/0002.png'],
+  const iifeBundles = await iifePage.evaluate(() =>
+    (window.__iifeBundles ?? []).map((bundle) => ({
+      manifest: bundle.manifest,
+      filePaths: Object.keys(bundle.files),
+    })),
   );
-  assert.deepEqual(iifeBundle.filePaths, ['frames/0001.png', 'frames/0002.png']);
+  assert.equal(iifeBundles.length, 2, 'One controller must support consecutive sessions.');
+  assert.notEqual(
+    iifeBundles[0].manifest.sessionId,
+    iifeBundles[1].manifest.sessionId,
+    'Each recording must get a fresh session id.',
+  );
+  for (const [index, markLabel] of ['IIFE first session', 'IIFE second session'].entries()) {
+    const bundle = iifeBundles[index];
+    assert.equal(bundle.manifest.keyframes.length, 2);
+    assert.deepEqual(
+      bundle.manifest.keyframes.map((frame) => frame.imagePath),
+      ['frames/0001.png', 'frames/0002.png'],
+    );
+    assert.deepEqual(bundle.filePaths, ['frames/0001.png', 'frames/0002.png']);
+    assert.deepEqual(
+      bundle.manifest.timeline
+        .filter((event) => event.kind === 'mark')
+        .map((event) => event.payload.label),
+      [markLabel],
+      'Each session must keep only its own timeline events.',
+    );
+  }
 
   const audioContext = await browser.newContext({
     permissions: ['microphone'],

@@ -184,7 +184,7 @@ function extensionForMime(mimeType: string, fallback: string): string {
 }
 
 class Highlite implements HighliteController {
-  readonly #sessionId = createId();
+  #sessionId = createId();
   readonly #options: HighliteOptions;
   readonly #captureOptions: NonNullable<HighliteOptions['capture']>;
   readonly #privacyOptions: NonNullable<HighliteOptions['privacy']>;
@@ -192,7 +192,7 @@ class Highlite implements HighliteController {
   readonly #listeners = new Map<HighliteEventName, Set<HighliteEventHandler<HighliteEventName>>>();
   readonly #files: Record<string, Blob> = {};
   readonly #targets = new Map<string, Target>();
-  readonly #elementIds = new WeakMap<Element, string>();
+  #elementIds = new WeakMap<Element, string>();
   readonly #registeredTargets = new Map<string, Record<string, string | number | boolean>>();
   readonly #annotations: Annotation[] = [];
   readonly #keyframes: HighliteManifest['keyframes'] = [];
@@ -206,6 +206,7 @@ class Highlite implements HighliteController {
   readonly #interactionCleanups: Array<() => void> = [];
   #timeline: SessionTimeline | undefined;
   #state: CaptureState = 'idle';
+  #sessionToken = 0;
   #microphoneState: MicrophoneState = 'disabled';
   #audioStream: MediaStream | undefined;
   #recorder: MediaRecorder | undefined;
@@ -262,11 +263,22 @@ class Highlite implements HighliteController {
   }
 
   async start(): Promise<void> {
-    if (this.#state !== 'idle') throw new Error('A Highlite instance can record only once.');
+    if (
+      this.#state === 'starting' ||
+      this.#state === 'recording' ||
+      this.#state === 'processing' ||
+      this.#state === 'destroyed'
+    ) {
+      throw new Error('This Highlite controller is already running a session.');
+    }
     if (this.#isDisabledRoute(location.pathname)) {
       throw new Error('Highlite is disabled on this route.');
     }
+    // A cancelled start may still be unwinding a pending permission prompt.
+    if (this.#startPromise) await this.#startPromise.catch(() => undefined);
 
+    if (this.#state !== 'idle') this.#sessionId = createId();
+    this.#resetSession();
     this.#state = 'starting';
     this.#timeline = new SessionTimeline(
       this.#options.clock ? { clock: this.#options.clock } : undefined,
@@ -283,6 +295,38 @@ class Highlite implements HighliteController {
     this.#toolbar?.setStarting();
     this.#startPromise = this.#beginCapture();
     return this.#startPromise;
+  }
+
+  /** Drop every per-session buffer so a later start() begins with a clean bundle. */
+  #resetSession(): void {
+    this.#removeInteractionListeners();
+    this.#sessionToken += 1;
+    this.#timeline = undefined;
+    this.#microphoneState = 'disabled';
+    this.#audioStream = undefined;
+    this.#recorder = undefined;
+    this.#audioBlob = undefined;
+    this.#audioOffsetMs = undefined;
+    this.#bundle = undefined;
+    this.#startPromise = undefined;
+    this.#lastTargetId = undefined;
+    this.#lastUrl = '';
+    this.#initialPage = undefined;
+    this.#initialViewport = undefined;
+    this.#createdAt = '';
+    this.#frameAvailable = false;
+    this.#nextKeyframeOrder = 0;
+    for (const path of Object.keys(this.#files)) delete this.#files[path];
+    this.#targets.clear();
+    this.#elementIds = new WeakMap();
+    this.#annotations.length = 0;
+    this.#keyframes.length = 0;
+    this.#warnings.length = 0;
+    this.#audioChunks.length = 0;
+    this.#pendingCaptures.clear();
+    this.#interactionTimers.clear();
+    this.#keyframeOrder.clear();
+    this.#toolbar?.clearAnnotations();
   }
 
   async stop(): Promise<HighliteBundle> {
@@ -757,6 +801,7 @@ class Highlite implements HighliteController {
     annotationId: string | undefined,
     allowProcessing = false,
   ): Promise<void> {
+    const token = this.#sessionToken;
     const canCapture =
       this.#state === 'recording' || (allowProcessing && this.#state === 'processing');
     if (!this.#frameProvider || !this.#frameAvailable || !canCapture) {
@@ -768,6 +813,7 @@ class Highlite implements HighliteController {
     const order = this.#nextKeyframeOrder++;
     try {
       const image = await this.#frameProvider.capture(atMs);
+      if (token !== this.#sessionToken) return;
       if (this.#state !== 'recording' && this.#state !== 'processing') return;
       if (!image) {
         this.#addWarning('The frame provider did not return image data for a requested keyframe.');
@@ -788,6 +834,7 @@ class Highlite implements HighliteController {
       });
       this.#keyframeOrder.set(id, order);
     } catch (error) {
+      if (token !== this.#sessionToken) return;
       this.#addWarning(`A requested keyframe could not be saved: ${safeMessage(error)}`);
       this.#emit('error', { error, message: 'A screenshot candidate could not be saved.' });
     }

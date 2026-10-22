@@ -3,8 +3,8 @@ import type { Annotation } from '@highlite/core';
 /** Must match the stroke used by the toolbar canvas. */
 export const ANNOTATION_LINE_WIDTH = 4;
 export const ANNOTATION_ARROW_HEAD = 14;
-/** Keep a fresh annotation fully visible for four seconds, then fade the overlay out. */
-export const ANNOTATION_FADE_AFTER_MS = 4_000;
+/** Keep a fresh annotation fully visible for two seconds, then fade the overlay out. */
+export const ANNOTATION_FADE_AFTER_MS = 2_000;
 export const ANNOTATION_FADE_DURATION_MS = 400;
 
 export type NormalizedPoint = Annotation['points'][number];

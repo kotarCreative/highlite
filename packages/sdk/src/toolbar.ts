@@ -77,6 +77,10 @@ canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events:
 .tool svg { width: 19px; height: 19px; }
 .discard svg { width: 18px; height: 18px; }
 .tool:hover, .discard:hover { background: #272b34; color: #fff; }
+.tool:disabled, .mark:disabled, .stop:disabled { cursor: progress; opacity: .45; }
+.tool:disabled:hover { background: transparent; color: #aeb6c4; }
+.mark:disabled:hover { background: #ffffff12; }
+.stop:disabled:hover { background: #e5484d; }
 .tool[aria-pressed='true'] { background: #5a66dc; color: #fff; box-shadow: inset 0 1px 0 #ffffff2e; }
 .tool:focus-visible, .discard:focus-visible, .mark:focus-visible, .stop:focus-visible { outline: 3px solid #91a7ff; outline-offset: 2px; }
 .tool::after, .discard::after { content: attr(data-tooltip); position: absolute; left: 50%; bottom: calc(100% + 9px); z-index: 2; padding: 5px 9px; border-radius: 7px; background: #f5f6f9; box-shadow: 0 6px 18px #0f11164d; color: #16181d; font-size: 11px; font-weight: 600; line-height: 1.3; letter-spacing: 0; text-transform: none; white-space: nowrap; opacity: 0; visibility: hidden; transform: translate(-50%, 2px); transition: opacity .12s ease, transform .12s ease, visibility .12s; pointer-events: none; }
@@ -547,11 +551,12 @@ export class CaptureToolbar {
     this.#dock.hidden = false;
     this.#dockLabel.classList.add('is-starting');
     this.#dockLabelText.textContent = 'Starting';
-    this.#tools.hidden = true;
-    this.#markButton.hidden = true;
-    this.#stopButton.hidden = true;
+    this.#tools.hidden = false;
+    this.#markButton.hidden = false;
+    this.#stopButton.hidden = false;
     this.#cancelButton.hidden = false;
     this.#exportButton.hidden = true;
+    this.#setControlsEnabled(false);
     this.#setAnnotating(false);
     this.setStatus('Starting Highlite…');
   }
@@ -569,6 +574,7 @@ export class CaptureToolbar {
     this.#launcher.hidden = true;
     this.#dockLabel.classList.remove('is-starting');
     this.#dockLabelText.textContent = 'Recording';
+    this.#setControlsEnabled(true);
     this.#tools.hidden = false;
     this.#markButton.hidden = false;
     this.#stopButton.hidden = false;
@@ -856,6 +862,13 @@ export class CaptureToolbar {
     } catch (error) {
       this.setStatus(error instanceof Error ? error.message : 'Highlite action failed.');
     }
+  }
+
+  #setControlsEnabled(enabled: boolean): void {
+    this.#interactButton.disabled = !enabled;
+    for (const button of this.#toolButtons.values()) button.disabled = !enabled;
+    this.#markButton.disabled = !enabled;
+    this.#stopButton.disabled = !enabled;
   }
 
   #selectTool(kind: AnnotationKind): void {
