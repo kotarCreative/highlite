@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Cursor, Read};
 use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -23,7 +24,7 @@ use axum::http::header::{
 };
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
@@ -35,15 +36,19 @@ use highlite_compiler::{
 use hmac::{Hmac, KeyInit, Mac};
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
 use tokio::sync::Semaphore;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 const MANIFEST_SCHEMA_VERSION: &str = "0.1.0";
 const MAX_PATH_COMPONENTS: usize = 16;
+const MAX_RUN_OUTPUT_BYTES: usize = 64 * 1024;
+const DEFAULT_PIPELINE_TIMEOUT_SECONDS: u64 = 300;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -63,6 +68,10 @@ pub struct RelayConfig {
     pub transcriber_command: Option<String>,
     pub language: Option<String>,
     pub keep_uploads: bool,
+    pub ui: bool,
+    pub allow_pipelines: bool,
+    pub pipelines_file: Option<PathBuf>,
+    pub pipeline_concurrency: usize,
     pub compile: CompileOptions,
     pub bundle: BundleOptions,
     pub webhook: Option<WebhookConfig>,
@@ -95,6 +104,14 @@ impl RelayConfig {
         }
         if self.max_files == 0 {
             return Err("HIGHLITE_RELAY_MAX_FILES must be at least 1".to_owned());
+        }
+        if self.pipeline_concurrency == 0 {
+            return Err("HIGHLITE_RELAY_PIPELINE_CONCURRENCY must be at least 1".to_owned());
+        }
+        if self.allow_pipelines && !bind_is_loopback(&self.bind) {
+            return Err(
+                "HIGHLITE_RELAY_ALLOW_PIPELINES requires a loopback HIGHLITE_RELAY_BIND".to_owned(),
+            );
         }
         if self.compile.max_keyframes == Some(0) {
             return Err("HIGHLITE_RELAY_MAX_KEYFRAMES must be at least 1".to_owned());
@@ -140,7 +157,65 @@ impl RelayConfig {
 struct AppState {
     config: Arc<RelayConfig>,
     compile_slots: Arc<Semaphore>,
+    run_slots: Arc<Semaphore>,
+    pipelines: Arc<Vec<Pipeline>>,
     in_flight: Arc<Mutex<std::collections::HashSet<String>>>,
+}
+
+/// A trusted local command that can be run against a compiled session.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pipeline {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub command: String,
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
+    #[serde(default = "default_pipeline_timeout_seconds")]
+    pub timeout_seconds: u64,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+fn default_pipeline_timeout_seconds() -> u64 {
+    DEFAULT_PIPELINE_TIMEOUT_SECONDS
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PipelinesFile {
+    #[serde(default)]
+    pipelines: Vec<Pipeline>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PipelineRunStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineRun {
+    pub run_id: String,
+    pub session_id: String,
+    pub pipeline: String,
+    pub status: PipelineRunStatus,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +225,12 @@ pub struct SessionMetadata {
     pub status: SessionStatus,
     pub received_at_ms: u64,
     pub bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -249,44 +330,66 @@ impl Drop for TempCapture {
 }
 
 /// Build the HTTP application. The returned router is fully configured and stateless
-/// apart from the shared in-flight set and compile semaphore.
+/// apart from the shared in-flight set, compile semaphore, and pipeline runs.
 pub fn build_app(config: RelayConfig) -> Result<Router, String> {
     config.validate()?;
     create_data_dirs(&config.data_dir)?;
+    let pipelines = load_pipelines(&config)?;
+    if config.allow_pipelines {
+        eprintln!(
+            "pipelines enabled with {} configured pipeline(s)",
+            pipelines.len()
+        );
+    }
     let state = AppState {
         compile_slots: Arc::new(Semaphore::new(config.concurrency)),
+        run_slots: Arc::new(Semaphore::new(config.pipeline_concurrency)),
+        pipelines: Arc::new(pipelines),
         in_flight: Arc::new(Mutex::new(std::collections::HashSet::new())),
         config: Arc::new(config),
     };
 
-    let ingest = Router::new()
-        .route("/v1/sessions", post(ingest_session))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            require_ingest_token,
-        ));
-    let read = Router::new()
+    let api = Router::new()
+        .route("/v1/sessions", get(list_sessions).post(ingest_session))
         .route("/v1/sessions/{id}", get(get_session))
         .route("/v1/sessions/{id}/bundle.zip", get(get_bundle))
+        .route("/v1/sessions/{id}/runs", get(list_session_runs))
+        .route("/v1/sessions/{id}/pipelines/{name}", post(start_pipeline))
+        .route("/v1/pipelines", get(list_pipelines))
+        .route("/v1/runs/{id}", get(get_run))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
-            require_read_token,
+            require_api_token,
         ));
 
-    Ok(Router::new()
-        .route("/healthz", get(health))
-        .merge(ingest)
-        .merge(read)
+    let mut app = Router::new().route("/healthz", get(health));
+    if state.config.ui {
+        app = app.route("/", get(ui_index));
+    }
+
+    Ok(app
+        .merge(api)
         .layer(middleware::from_fn_with_state(state.clone(), guard_request))
         .with_state(state))
 }
 
 fn create_data_dirs(root: &Path) -> Result<(), String> {
-    for child in ["inbox", "sessions", "bundles", "downloads", "uploads"] {
+    for child in [
+        "inbox",
+        "sessions",
+        "bundles",
+        "downloads",
+        "uploads",
+        "runs",
+    ] {
         fs::create_dir_all(root.join(child))
             .map_err(|error| format!("could not create {}: {error}", root.join(child).display()))?;
     }
     Ok(())
+}
+
+async fn ui_index() -> Html<&'static str> {
+    Html(include_str!("ui.html"))
 }
 
 async fn health() -> impl IntoResponse {
@@ -303,8 +406,25 @@ async fn guard_request(State(state): State<AppState>, request: Request, next: Ne
         .get(ORIGIN)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
+    let host = request
+        .headers()
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .or_else(|| {
+            request
+                .uri()
+                .authority()
+                .map(|authority| authority.as_str().to_owned())
+        });
     let origin_allowed = match origin.as_deref() {
-        Some(origin) => origin_is_allowed(origin, &state.config.allowed_origins),
+        Some(origin) => {
+            origin_is_allowed(origin, &state.config.allowed_origins)
+                || (state.config.ui
+                    && host
+                        .as_deref()
+                        .is_some_and(|host| origin_matches_host(origin, host)))
+        }
         None => false,
     };
 
@@ -312,19 +432,7 @@ async fn guard_request(State(state): State<AppState>, request: Request, next: Ne
         return error_response(StatusCode::FORBIDDEN, "origin is not allowed");
     }
 
-    if !host_is_allowed(
-        request
-            .headers()
-            .get(HOST)
-            .and_then(|value| value.to_str().ok())
-            .or_else(|| {
-                request
-                    .uri()
-                    .authority()
-                    .map(|authority| authority.as_str())
-            }),
-        &state.config.allowed_hosts,
-    ) {
+    if !host_is_allowed(host.as_deref(), &state.config.allowed_hosts) {
         return error_response(StatusCode::MISDIRECTED_REQUEST, "host is not allowed");
     }
 
@@ -349,6 +457,15 @@ fn origin_is_allowed(origin: &str, allowed: &[String]) -> bool {
     allowed
         .iter()
         .any(|candidate| candidate.trim_end_matches('/').eq_ignore_ascii_case(origin))
+}
+
+/// The bundled UI talks to the relay from the same origin. Browsers still send an
+/// `Origin` header on its POSTs, so let the UI's own origin through without
+/// requiring operators to allowlist their own local address.
+fn origin_matches_host(origin: &str, host: &str) -> bool {
+    origin
+        .split_once("://")
+        .is_some_and(|(_, authority)| authority.eq_ignore_ascii_case(host.trim()))
 }
 
 fn host_is_allowed(host: Option<&str>, allowed: &[String]) -> bool {
@@ -386,23 +503,19 @@ fn apply_cors(headers: &mut HeaderMap, origin: Option<&str>, allowed: bool) {
     headers.insert(ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("600"));
 }
 
-async fn require_ingest_token(
+async fn require_api_token(
     State(state): State<AppState>,
     request: Request,
     next: Next,
 ) -> Response {
-    if bearer_is_valid(request.headers(), &state.config.ingest_tokens) {
-        next.run(request).await
-    } else {
-        unauthorized()
+    let is_ingest = request.method() == Method::POST && request.uri().path() == "/v1/sessions";
+    if is_ingest {
+        return if bearer_is_valid(request.headers(), &state.config.ingest_tokens) {
+            next.run(request).await
+        } else {
+            unauthorized()
+        };
     }
-}
-
-async fn require_read_token(
-    State(state): State<AppState>,
-    request: Request,
-    next: Next,
-) -> Response {
     if state.config.read_tokens.is_empty() {
         return error_response(
             StatusCode::FORBIDDEN,
@@ -542,6 +655,84 @@ fn spawn_session_webhook(config: Arc<RelayConfig>, metadata: &SessionMetadata) {
     });
 }
 
+async fn list_sessions(State(state): State<AppState>) -> Response {
+    let data_dir = state.config.data_dir.clone();
+    match tokio::task::spawn_blocking(move || collect_sessions(&data_dir)).await {
+        Ok(Ok(sessions)) => (StatusCode::OK, Json(json!({ "sessions": sessions }))).into_response(),
+        Ok(Err(message)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, message),
+        Err(error) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not list sessions: {error}"),
+        ),
+    }
+}
+
+fn collect_sessions(data_dir: &Path) -> Result<Vec<SessionMetadata>, String> {
+    let directory = data_dir.join("sessions");
+    let entries = fs::read_dir(&directory)
+        .map_err(|error| format!("could not read {}: {error}", directory.display()))?;
+    let mut sessions = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("could not read a session record: {error}"))?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json")
+            || path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+        {
+            continue;
+        }
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprintln!("could not read {}: {error}", path.display());
+                continue;
+            }
+        };
+        let mut metadata: SessionMetadata = match serde_json::from_slice(&bytes) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                eprintln!("could not parse {}: {error}", path.display());
+                continue;
+            }
+        };
+        fill_session_details(data_dir, &mut metadata);
+        sessions.push(metadata);
+    }
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.received_at_ms));
+    Ok(sessions)
+}
+
+/// Older records predate the page and duration fields; recover them from the bundle.
+fn fill_session_details(data_dir: &Path, metadata: &mut SessionMetadata) {
+    if metadata.page_title.is_some()
+        && metadata.page_url.is_some()
+        && metadata.duration_ms.is_some()
+    {
+        return;
+    }
+    let path = data_dir
+        .join("bundles")
+        .join(&metadata.session_id)
+        .join("manifest.json");
+    let Ok(bytes) = fs::read(&path) else {
+        return;
+    };
+    let Ok(manifest) = serde_json::from_slice::<Value>(&bytes) else {
+        return;
+    };
+    if metadata.page_title.is_none() {
+        metadata.page_title = manifest["page"]["title"].as_str().map(str::to_owned);
+    }
+    if metadata.page_url.is_none() {
+        metadata.page_url = manifest["page"]["initialUrl"].as_str().map(str::to_owned);
+    }
+    if metadata.duration_ms.is_none() {
+        metadata.duration_ms = manifest["durationMs"].as_u64();
+    }
+}
+
 async fn get_session(State(state): State<AppState>, RoutePath(id): RoutePath<String>) -> Response {
     let Some(id) = checked_session_id(&id) else {
         return error_response(StatusCode::NOT_FOUND, "session not found");
@@ -574,6 +765,337 @@ async fn get_bundle(State(state): State<AppState>, RoutePath(id): RoutePath<Stri
         response.headers_mut().insert(CONTENT_DISPOSITION, value);
     }
     response
+}
+
+async fn list_pipelines(State(state): State<AppState>) -> Response {
+    let pipelines: Vec<Value> = state
+        .pipelines
+        .iter()
+        .map(|pipeline| {
+            json!({
+                "name": pipeline.name,
+                "description": pipeline.description,
+                "timeoutSeconds": pipeline.timeout_seconds,
+            })
+        })
+        .collect();
+    Json(json!({
+        "enabled": state.config.allow_pipelines,
+        "pipelines": pipelines,
+    }))
+    .into_response()
+}
+
+async fn start_pipeline(
+    State(state): State<AppState>,
+    RoutePath((id, name)): RoutePath<(String, String)>,
+) -> Response {
+    let Some(session_id) = checked_session_id(&id) else {
+        return error_response(StatusCode::NOT_FOUND, "session not found");
+    };
+    let metadata = match read_metadata(&state.config.data_dir, &session_id) {
+        Ok(metadata) => metadata,
+        Err(_) => return error_response(StatusCode::NOT_FOUND, "session not found"),
+    };
+    if metadata.status != SessionStatus::Ready {
+        return error_response(StatusCode::CONFLICT, "session is not ready");
+    }
+    let Some(pipeline) = state
+        .pipelines
+        .iter()
+        .find(|pipeline| pipeline.name == name)
+        .cloned()
+    else {
+        return error_response(StatusCode::NOT_FOUND, "pipeline not found");
+    };
+    let bundle_dir = state.config.data_dir.join("bundles").join(&session_id);
+    if !bundle_dir.is_dir() {
+        return error_response(StatusCode::CONFLICT, "the session bundle is missing");
+    }
+
+    let run = PipelineRun {
+        run_id: temp_name("run"),
+        session_id: session_id.clone(),
+        pipeline: pipeline.name.clone(),
+        status: PipelineRunStatus::Queued,
+        created_at_ms: now_ms(),
+        finished_at_ms: None,
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+        error: None,
+    };
+    if let Err(error) = write_run(&state.config.data_dir, &run) {
+        return error_response(error.status, error.message);
+    }
+
+    let location = format!("/v1/runs/{}", run.run_id);
+    let task_state = state.clone();
+    let task_run = run.clone();
+    tokio::spawn(async move {
+        execute_run(task_state, task_run, pipeline).await;
+    });
+
+    let mut response = (StatusCode::ACCEPTED, Json(run)).into_response();
+    if let Ok(value) = HeaderValue::from_str(&location) {
+        response.headers_mut().insert(LOCATION, value);
+    }
+    response
+}
+
+async fn get_run(State(state): State<AppState>, RoutePath(id): RoutePath<String>) -> Response {
+    let Some(id) = checked_session_id(&id) else {
+        return error_response(StatusCode::NOT_FOUND, "run not found");
+    };
+    match read_run(&state.config.data_dir, &id) {
+        Ok(run) => (StatusCode::OK, Json(run)).into_response(),
+        Err(_) => error_response(StatusCode::NOT_FOUND, "run not found"),
+    }
+}
+
+async fn list_session_runs(
+    State(state): State<AppState>,
+    RoutePath(id): RoutePath<String>,
+) -> Response {
+    let Some(session_id) = checked_session_id(&id) else {
+        return error_response(StatusCode::NOT_FOUND, "session not found");
+    };
+    let data_dir = state.config.data_dir.clone();
+    match tokio::task::spawn_blocking(move || collect_runs(&data_dir, Some(&session_id))).await {
+        Ok(runs) => (StatusCode::OK, Json(json!({ "runs": runs }))).into_response(),
+        Err(error) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not list runs: {error}"),
+        ),
+    }
+}
+
+async fn execute_run(state: AppState, mut run: PipelineRun, pipeline: Pipeline) {
+    let Ok(_permit) = state.run_slots.clone().acquire_owned().await else {
+        run.status = PipelineRunStatus::Failed;
+        run.finished_at_ms = Some(now_ms());
+        run.error = Some("the relay is shutting down".to_owned());
+        persist_run(&state.config.data_dir, &run);
+        return;
+    };
+
+    run.status = PipelineRunStatus::Running;
+    persist_run(&state.config.data_dir, &run);
+
+    let outcome = run_command(&state, &pipeline, &run).await;
+    run.status = outcome.status;
+    run.finished_at_ms = Some(now_ms());
+    run.exit_code = outcome.exit_code;
+    run.stdout = Some(outcome.stdout);
+    run.stderr = Some(outcome.stderr);
+    run.error = outcome.error;
+    persist_run(&state.config.data_dir, &run);
+}
+
+fn persist_run(data_dir: &Path, run: &PipelineRun) {
+    if let Err(error) = write_run(data_dir, run) {
+        eprintln!("could not persist run {}: {}", run.run_id, error.message);
+    }
+}
+
+struct CommandOutcome {
+    status: PipelineRunStatus,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    error: Option<String>,
+}
+
+async fn run_command(state: &AppState, pipeline: &Pipeline, run: &PipelineRun) -> CommandOutcome {
+    let data_dir = absolute_path(&state.config.data_dir);
+    let bundle_dir = data_dir.join("bundles").join(&run.session_id);
+    let cwd = pipeline
+        .cwd
+        .as_ref()
+        .map(|cwd| absolute_path(cwd))
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let mut command = shell_command(&pipeline.command);
+    command
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("HIGHLITE_SESSION_ID", &run.session_id)
+        .env("HIGHLITE_RUN_ID", &run.run_id)
+        .env("HIGHLITE_BUNDLE_DIR", &bundle_dir)
+        .env(
+            "HIGHLITE_BUNDLE_ZIP",
+            data_dir
+                .join("downloads")
+                .join(format!("{}.zip", run.session_id)),
+        )
+        .env("HIGHLITE_SUMMARY_PATH", bundle_dir.join("summary.md"))
+        .env("HIGHLITE_MANIFEST_PATH", bundle_dir.join("manifest.json"))
+        .env("HIGHLITE_BUNDLE_JSON", bundle_dir.join("bundle.json"))
+        .env("HIGHLITE_SCRAWL_JSON", bundle_dir.join("scrawl.json"))
+        .env("HIGHLITE_ANALYSIS_JSON", bundle_dir.join("analysis.json"));
+    for (name, value) in &pipeline.env {
+        command.env(name, value);
+    }
+    for name in [
+        "HIGHLITE_RELAY_INGEST_TOKEN",
+        "HIGHLITE_RELAY_READ_TOKEN",
+        "HIGHLITE_RELAY_WEBHOOK_SECRET",
+    ] {
+        command.env_remove(name);
+    }
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return CommandOutcome {
+                status: PipelineRunStatus::Failed,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                error: Some(format!("could not start the pipeline command: {error}")),
+            };
+        }
+    };
+    let stdout_task = tokio::spawn(read_stream(child.stdout.take()));
+    let stderr_task = tokio::spawn(read_stream(child.stderr.take()));
+
+    let mut error = None;
+    let exit_status =
+        match tokio::time::timeout(Duration::from_secs(pipeline.timeout_seconds), child.wait())
+            .await
+        {
+            Ok(Ok(status)) => Some(status),
+            Ok(Err(wait_error)) => {
+                error = Some(format!(
+                    "could not wait for the pipeline command: {wait_error}"
+                ));
+                None
+            }
+            Err(_) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                error = Some(format!(
+                    "pipeline timed out after {} second(s)",
+                    pipeline.timeout_seconds
+                ));
+                None
+            }
+        };
+
+    let stdout = truncate_output(stdout_task.await.unwrap_or_default());
+    let stderr = truncate_output(stderr_task.await.unwrap_or_default());
+    let exit_code = exit_status.and_then(|status| status.code());
+    let succeeded = error.is_none() && exit_status.is_some_and(|status| status.success());
+
+    CommandOutcome {
+        status: if succeeded {
+            PipelineRunStatus::Succeeded
+        } else {
+            PipelineRunStatus::Failed
+        },
+        exit_code,
+        stdout,
+        stderr,
+        error,
+    }
+}
+
+async fn read_stream<R>(reader: Option<R>) -> Vec<u8>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut bytes = Vec::new();
+    if let Some(mut reader) = reader {
+        let _ = reader.read_to_end(&mut bytes).await;
+    }
+    bytes
+}
+
+fn truncate_output(bytes: Vec<u8>) -> String {
+    if bytes.len() <= MAX_RUN_OUTPUT_BYTES {
+        return String::from_utf8_lossy(&bytes).into_owned();
+    }
+    let mut output = String::from_utf8_lossy(&bytes[..MAX_RUN_OUTPUT_BYTES]).into_owned();
+    output.push_str("\n… output truncated");
+    output
+}
+
+fn shell_command(script: &str) -> Command {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(script);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg(script);
+        command
+    }
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_owned();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_owned())
+}
+
+fn write_run(data_dir: &Path, run: &PipelineRun) -> Result<(), UploadError> {
+    let directory = data_dir.join("runs");
+    let path = directory.join(format!("{}.json", run.run_id));
+    let temporary = directory.join(format!(".{}.json.tmp", run.run_id));
+    let json = serde_json::to_vec_pretty(run)
+        .map_err(|error| UploadError::internal(format!("could not serialize the run: {error}")))?;
+    fs::write(&temporary, json)
+        .map_err(|error| UploadError::internal(format!("could not write the run: {error}")))?;
+    fs::rename(&temporary, &path)
+        .map_err(|error| UploadError::internal(format!("could not store the run: {error}")))?;
+    Ok(())
+}
+
+fn read_run(data_dir: &Path, id: &str) -> Result<PipelineRun, UploadError> {
+    let path = data_dir.join("runs").join(format!("{id}.json"));
+    let bytes =
+        fs::read(&path).map_err(|_| UploadError::new(StatusCode::NOT_FOUND, "run not found"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| UploadError::internal(format!("invalid stored run: {error}")))
+}
+
+fn collect_runs(data_dir: &Path, session_id: Option<&str>) -> Vec<PipelineRun> {
+    let directory = data_dir.join("runs");
+    let Ok(entries) = fs::read_dir(&directory) else {
+        return Vec::new();
+    };
+    let mut runs = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json")
+            || path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+        {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
+        let Ok(run) = serde_json::from_slice::<PipelineRun>(&bytes) else {
+            continue;
+        };
+        if session_id.is_none_or(|id| run.session_id == id) {
+            runs.push(run);
+        }
+    }
+    runs.sort_by_key(|run| std::cmp::Reverse(run.created_at_ms));
+    runs
 }
 
 fn process_upload(state: &AppState, bytes: Bytes) -> Result<UploadOutcome, UploadError> {
@@ -634,6 +1156,9 @@ fn process_upload(state: &AppState, bytes: Bytes) -> Result<UploadOutcome, Uploa
                 status: SessionStatus::Ready,
                 received_at_ms,
                 bytes: bytes.len() as u64,
+                page_title: Some(manifest.page.title.clone()),
+                page_url: Some(manifest.page.initial_url.clone()),
+                duration_ms: Some(manifest.duration_ms),
                 summary: Some(summary),
                 error: None,
                 webhook: new_webhook_delivery(&state.config),
@@ -651,6 +1176,9 @@ fn process_upload(state: &AppState, bytes: Bytes) -> Result<UploadOutcome, Uploa
                 status: SessionStatus::Failed,
                 received_at_ms,
                 bytes: bytes.len() as u64,
+                page_title: Some(manifest.page.title.clone()),
+                page_url: Some(manifest.page.initial_url.clone()),
+                duration_ms: Some(manifest.duration_ms),
                 summary: None,
                 error: Some(error.message.clone()),
                 webhook: new_webhook_delivery(&state.config),
@@ -1132,11 +1660,82 @@ fn add_directory(
     Ok(())
 }
 
+fn load_pipelines(config: &RelayConfig) -> Result<Vec<Pipeline>, String> {
+    if !config.allow_pipelines {
+        return Ok(Vec::new());
+    }
+    let path = config
+        .pipelines_file
+        .clone()
+        .unwrap_or_else(|| config.data_dir.join("pipelines.json"));
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            eprintln!(
+                "note: pipelines are enabled but {} does not exist; no pipelines are available.",
+                path.display()
+            );
+            return Ok(Vec::new());
+        }
+        Err(error) => {
+            return Err(format!("could not read {}: {error}", path.display()));
+        }
+    };
+    let file: PipelinesFile = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid pipelines file {}: {error}", path.display()))?;
+    let mut seen = std::collections::HashSet::new();
+    for pipeline in &file.pipelines {
+        validate_pipeline(pipeline)?;
+        if !seen.insert(pipeline.name.as_str()) {
+            return Err(format!(
+                "duplicate pipeline name {:?} in {}",
+                pipeline.name,
+                path.display()
+            ));
+        }
+    }
+    Ok(file.pipelines)
+}
+
+fn validate_pipeline(pipeline: &Pipeline) -> Result<(), String> {
+    let name = pipeline.name.as_str();
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err(
+            "pipeline names must be 1-64 characters using letters, digits, '-' or '_'".to_owned(),
+        );
+    }
+    if pipeline.command.trim().is_empty() {
+        return Err(format!("pipeline {:?} has an empty command", pipeline.name));
+    }
+    if pipeline.timeout_seconds == 0 {
+        return Err(format!(
+            "pipeline {:?} must use a timeout of at least 1 second",
+            pipeline.name
+        ));
+    }
+    Ok(())
+}
+
+fn bind_is_loopback(bind: &str) -> bool {
+    let host = if let Some(rest) = bind.strip_prefix('[') {
+        rest.split(']').next().unwrap_or_default()
+    } else {
+        bind.rsplit_once(':').map(|(host, _)| host).unwrap_or(bind)
+    };
+    host.eq_ignore_ascii_case("localhost") || host == "::1" || host.starts_with("127.")
+}
+
 /// Parse relay CLI arguments into a validated configuration.
 pub fn config_from_args(args: &[String]) -> Result<RelayConfig, String> {
     let mut env_files: Vec<PathBuf> = Vec::new();
     let mut bind_override: Option<String> = None;
     let mut data_dir_override: Option<PathBuf> = None;
+    let mut ui_override: Option<bool> = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -1163,6 +1762,7 @@ pub fn config_from_args(args: &[String]) -> Result<RelayConfig, String> {
                         .ok_or_else(|| "--data-dir needs a value".to_owned())?,
                 ));
             }
+            "--ui" => ui_override = Some(true),
             flag if flag.starts_with('-') => {
                 return Err(format!(
                     "unknown option: {flag}; put relay settings in an env file and pass --env-file"
@@ -1185,13 +1785,14 @@ pub fn config_from_args(args: &[String]) -> Result<RelayConfig, String> {
             values.insert(name, value);
         }
     }
-    config_from_values(values, bind_override, data_dir_override)
+    config_from_values(values, bind_override, data_dir_override, ui_override)
 }
 
 fn config_from_values(
     values: HashMap<String, String>,
     bind_override: Option<String>,
     data_dir_override: Option<PathBuf>,
+    ui_override: Option<bool>,
 ) -> Result<RelayConfig, String> {
     let lookup = |name: &str| values.get(name).cloned();
     let bind = bind_override
@@ -1236,6 +1837,23 @@ fn config_from_values(
         lookup("HIGHLITE_RELAY_KEEP_UPLOADS"),
         "HIGHLITE_RELAY_KEEP_UPLOADS",
         false,
+    )?;
+    let ui = match ui_override {
+        Some(value) => value,
+        None => env_bool(lookup("HIGHLITE_RELAY_UI"), "HIGHLITE_RELAY_UI", false)?,
+    };
+    let allow_pipelines = env_bool(
+        lookup("HIGHLITE_RELAY_ALLOW_PIPELINES"),
+        "HIGHLITE_RELAY_ALLOW_PIPELINES",
+        false,
+    )?;
+    let pipelines_file = lookup("HIGHLITE_RELAY_PIPELINES_FILE")
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from);
+    let pipeline_concurrency = env_number(
+        lookup("HIGHLITE_RELAY_PIPELINE_CONCURRENCY"),
+        "HIGHLITE_RELAY_PIPELINE_CONCURRENCY",
+        2,
     )?;
     let transcriber_command =
         lookup("HIGHLITE_RELAY_TRANSCRIBER_COMMAND").or_else(|| lookup("HIGHLITE_ASR_COMMAND"));
@@ -1302,6 +1920,10 @@ fn config_from_values(
         transcriber_command,
         language: lookup("HIGHLITE_RELAY_LANGUAGE"),
         keep_uploads,
+        ui,
+        allow_pipelines,
+        pipelines_file,
+        pipeline_concurrency: usize::try_from(pipeline_concurrency).unwrap_or(usize::MAX),
         compile,
         bundle,
         webhook: None,
@@ -1545,6 +2167,10 @@ mod tests {
             transcriber_command: None,
             language: None,
             keep_uploads: false,
+            ui: false,
+            allow_pipelines: false,
+            pipelines_file: None,
+            pipeline_concurrency: 1,
             compile: CompileOptions::default(),
             bundle: BundleOptions::default(),
             webhook: None,
@@ -1656,6 +2282,196 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lists_ingested_sessions() {
+        let temp = TempDir::new().unwrap();
+        let (app, _) = test_app(&temp);
+        let mut upload = request(
+            Method::POST,
+            "/v1/sessions",
+            Body::from(capture_zip("session-list")),
+        );
+        upload.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer ingest-secret"),
+        );
+        upload
+            .headers_mut()
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/zip"));
+        assert_eq!(
+            app.clone().oneshot(upload).await.unwrap().status(),
+            StatusCode::CREATED
+        );
+
+        let mut list = request(Method::GET, "/v1/sessions", Body::empty());
+        list.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer read-secret"),
+        );
+        let response = app.oneshot(list).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let sessions = payload["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["sessionId"], "session-list");
+        assert_eq!(sessions[0]["pageTitle"], "Example");
+        assert_eq!(sessions[0]["pageUrl"], "https://example.com/");
+        assert_eq!(sessions[0]["durationMs"], 4000);
+    }
+
+    #[tokio::test]
+    async fn runs_a_configured_pipeline() {
+        let temp = TempDir::new().unwrap();
+        let pipelines = json!({
+            "pipelines": [{
+                "name": "echo-session",
+                "description": "Prints the session id",
+                "command": "printf '%s' \"$HIGHLITE_SESSION_ID\"",
+                "timeoutSeconds": 10
+            }]
+        });
+        fs::write(
+            temp.path().join("pipelines.json"),
+            serde_json::to_vec(&pipelines).unwrap(),
+        )
+        .unwrap();
+
+        let mut config = test_config(&temp);
+        config.allow_pipelines = true;
+        let app = build_app(config.clone()).expect("app should build");
+
+        let mut upload = request(
+            Method::POST,
+            "/v1/sessions",
+            Body::from(capture_zip("session-pipeline")),
+        );
+        upload.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer ingest-secret"),
+        );
+        upload
+            .headers_mut()
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/zip"));
+        assert_eq!(
+            app.clone().oneshot(upload).await.unwrap().status(),
+            StatusCode::CREATED
+        );
+
+        let mut start = request(
+            Method::POST,
+            "/v1/sessions/session-pipeline/pipelines/echo-session",
+            Body::empty(),
+        );
+        start.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer read-secret"),
+        );
+        let response = app.oneshot(start).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let run: PipelineRun = serde_json::from_slice(&body).unwrap();
+        assert_eq!(run.status, PipelineRunStatus::Queued);
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let stored = read_run(&config.data_dir, &run.run_id).expect("run should persist");
+            if matches!(
+                stored.status,
+                PipelineRunStatus::Succeeded | PipelineRunStatus::Failed
+            ) {
+                assert_eq!(
+                    stored.status,
+                    PipelineRunStatus::Succeeded,
+                    "{:?}",
+                    stored.error
+                );
+                assert_eq!(stored.stdout.as_deref(), Some("session-pipeline"));
+                assert_eq!(stored.exit_code, Some(0));
+                break;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "run did not finish");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn serves_the_sessions_ui_when_enabled() {
+        let temp = TempDir::new().unwrap();
+        let mut config = test_config(&temp);
+        config.ui = true;
+        let app = build_app(config).expect("app should build");
+        let response = app
+            .oneshot(request(Method::GET, "/", Body::empty()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Highlite sessions"));
+    }
+
+    #[tokio::test]
+    async fn allows_same_origin_requests_from_the_ui() {
+        let temp = TempDir::new().unwrap();
+        let mut config = test_config(&temp);
+        config.ui = true;
+        config.allowed_hosts = vec!["relay.test".to_owned()];
+        config.allowed_origins = Vec::new();
+        let app = build_app(config).expect("app should build");
+
+        let mut upload = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/sessions")
+            .header(HOST, "relay.test")
+            .header(ORIGIN, "http://relay.test")
+            .body(Body::from(capture_zip("session-ui")))
+            .unwrap();
+        upload.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer ingest-secret"),
+        );
+        upload
+            .headers_mut()
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/zip"));
+        let response = app.oneshot(upload).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[test]
+    fn pipelines_require_a_loopback_bind() {
+        let temp = TempDir::new().unwrap();
+        let mut config = test_config(&temp);
+        config.allow_pipelines = true;
+        config.bind = "0.0.0.0:8787".to_owned();
+        let Err(error) = build_app(config) else {
+            panic!("a non-loopback bind should reject pipelines");
+        };
+        assert!(error.contains("loopback"));
+    }
+
+    #[test]
+    fn rejects_invalid_pipeline_definitions() {
+        let mut pipeline = Pipeline {
+            name: "ok".to_owned(),
+            description: None,
+            command: "true".to_owned(),
+            cwd: None,
+            timeout_seconds: 10,
+            env: HashMap::new(),
+        };
+        assert!(validate_pipeline(&pipeline).is_ok());
+
+        pipeline.name = "bad name".to_owned();
+        assert!(validate_pipeline(&pipeline).is_err());
+        pipeline.name = "ok".to_owned();
+        pipeline.command = "  ".to_owned();
+        assert!(validate_pipeline(&pipeline).is_err());
+        pipeline.command = "true".to_owned();
+        pipeline.timeout_seconds = 0;
+        assert!(validate_pipeline(&pipeline).is_err());
+    }
+
+    #[tokio::test]
     async fn delivers_a_signed_webhook() {
         let temp = TempDir::new().unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1764,6 +2580,15 @@ mod tests {
             ("HIGHLITE_RELAY_MAX_FILES".to_owned(), "55".to_owned()),
             ("HIGHLITE_RELAY_CONCURRENCY".to_owned(), "3".to_owned()),
             ("HIGHLITE_RELAY_KEEP_UPLOADS".to_owned(), "yes".to_owned()),
+            ("HIGHLITE_RELAY_UI".to_owned(), "true".to_owned()),
+            (
+                "HIGHLITE_RELAY_PIPELINES_FILE".to_owned(),
+                "/tmp/pipelines.json".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_PIPELINE_CONCURRENCY".to_owned(),
+                "4".to_owned(),
+            ),
             (
                 "HIGHLITE_RELAY_TRANSCRIBER_COMMAND".to_owned(),
                 "python3 asr.py".to_owned(),
@@ -1806,7 +2631,7 @@ mod tests {
                 "1200".to_owned(),
             ),
         ]);
-        let config = config_from_values(values, None, None).expect("config should parse");
+        let config = config_from_values(values, None, None, None).expect("config should parse");
         assert_eq!(config.bind, "0.0.0.0:9999");
         assert_eq!(config.data_dir, PathBuf::from("/tmp/relay"));
         assert_eq!(
@@ -1824,6 +2649,13 @@ mod tests {
         assert_eq!(config.max_files, 55);
         assert_eq!(config.concurrency, 3);
         assert!(config.keep_uploads);
+        assert!(config.ui);
+        assert!(!config.allow_pipelines);
+        assert_eq!(
+            config.pipelines_file,
+            Some(PathBuf::from("/tmp/pipelines.json"))
+        );
+        assert_eq!(config.pipeline_concurrency, 4);
         assert_eq!(
             config.transcriber_command.as_deref(),
             Some("python3 asr.py")

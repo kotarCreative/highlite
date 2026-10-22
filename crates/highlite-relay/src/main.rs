@@ -14,6 +14,7 @@ Options:
   --env-file <path>   relay configuration file; repeatable, later files win
   --bind <addr>       listen address override
   --data-dir <dir>    storage root override
+  --ui                serve the local sessions UI at /
   -h, --help          show this help
 
 All relay settings live in the env file. Process environment variables override
@@ -30,6 +31,10 @@ the file, and --bind / --data-dir override both. Supported names:
   HIGHLITE_RELAY_MAX_FILES               default 2000
   HIGHLITE_RELAY_CONCURRENCY             default 2
   HIGHLITE_RELAY_KEEP_UPLOADS            true or false, default false
+  HIGHLITE_RELAY_UI                      serve the local sessions UI
+  HIGHLITE_RELAY_ALLOW_PIPELINES         allow local pipeline commands
+  HIGHLITE_RELAY_PIPELINES_FILE          default <data-dir>/pipelines.json
+  HIGHLITE_RELAY_PIPELINE_CONCURRENCY    default 2
   HIGHLITE_RELAY_TRANSCRIBER_COMMAND     ASR command; audio path is appended
   HIGHLITE_RELAY_LANGUAGE                ASR language hint
   HIGHLITE_RELAY_MAX_KEYFRAMES           compiler keyframe cap (default: compiler default)
@@ -53,14 +58,20 @@ HIGHLITE_ASR_COMMAND is accepted as a fallback for the transcriber command.
 
 Endpoints:
   POST /v1/sessions              ingest an application/zip capture
+  GET  /v1/sessions              list sessions
   GET  /v1/sessions/{id}         session status and summary
   GET  /v1/sessions/{id}/bundle.zip
+  GET  /v1/sessions/{id}/runs    pipeline runs for a session
+  POST /v1/sessions/{id}/pipelines/{name}
+  GET  /v1/pipelines             configured pipelines
+  GET  /v1/runs/{id}             pipeline run status and output
   GET  /healthz
+  GET  /                         local sessions UI with --ui
 
-POST requires an ingest token; session reads require a read token. When
-HIGHLITE_RELAY_ALLOWED_ORIGINS is empty, browsers cannot call the relay
-cross-origin. When HIGHLITE_RELAY_ALLOWED_HOSTS is empty for a concrete bind
-address, that address is accepted automatically.
+POST /v1/sessions requires an ingest token; all other /v1 routes require a
+read token. When HIGHLITE_RELAY_ALLOWED_ORIGINS is empty, browsers cannot call
+the relay cross-origin. When HIGHLITE_RELAY_ALLOWED_HOSTS is empty for a
+concrete bind address, that address is accepted automatically.
 ";
 
 #[tokio::main]
@@ -82,7 +93,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("warning: no allowed host configured; Host header checks are disabled.");
     }
     if config.allowed_origins.is_empty() {
-        eprintln!("warning: no allowed origin configured; browser uploads will fail CORS.");
+        if config.ui {
+            eprintln!(
+                "note: no allowed origin configured; only same-origin requests from the bundled UI are accepted."
+            );
+        } else {
+            eprintln!("warning: no allowed origin configured; browser uploads will fail CORS.");
+        }
     }
     if config.webhook.is_none() {
         eprintln!("note: no webhook configured; consumers must poll session status.");
@@ -99,6 +116,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "highlite-relay listening on http://{address} (data: {})",
         config.data_dir.display()
     );
+    if config.ui {
+        let mut ui_address = address;
+        if ui_address.ip().is_unspecified() {
+            ui_address.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
+        match config.read_tokens.first() {
+            Some(token) => {
+                eprintln!("highlite sessions UI: http://{ui_address}/#token={token}")
+            }
+            None => eprintln!(
+                "highlite sessions UI: http://{ui_address}/ (reads are disabled until a read token is configured)"
+            ),
+        }
+    }
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

@@ -1,0 +1,961 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Highlite sessions</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232457d6'/%3E%3Cpath d='M10 8v16M22 8v16M10 16h12' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f6f8;
+        --panel: #ffffff;
+        --ink: #16181d;
+        --muted: #667085;
+        --line: #e3e6eb;
+        --accent: #2457d6;
+        --accent-soft: #eef2fe;
+        --green: #067647;
+        --green-soft: #e7f6ee;
+        --red: #b42318;
+        --red-soft: #fdeceb;
+        --amber: #b54708;
+        --amber-soft: #fdf3e6;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          14px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          Helvetica,
+          Arial,
+          sans-serif;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 22px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+      .topbar h1 {
+        margin: 0;
+        font-size: 17px;
+        letter-spacing: -0.01em;
+      }
+      #status-line {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--ink);
+        border-radius: 8px;
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #c9ced8;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      button.primary:hover {
+        background: #1c48b5;
+      }
+      button.ghost {
+        border-color: transparent;
+        background: transparent;
+        color: var(--muted);
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      main {
+        padding: 22px;
+        max-width: 1280px;
+        margin: 0 auto;
+      }
+      .gate {
+        max-width: 420px;
+        margin: 12vh auto 0;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 24px;
+      }
+      .gate h2 {
+        margin: 0 0 6px;
+        font-size: 16px;
+      }
+      .gate p {
+        margin: 0 0 16px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .gate form {
+        display: flex;
+        gap: 8px;
+      }
+      .gate input {
+        flex: 1;
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #fff;
+      }
+      .gate input:focus {
+        outline: 2px solid var(--accent-soft);
+        border-color: var(--accent);
+      }
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 13px 16px;
+        border-bottom: 1px solid var(--line);
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .panel-head span:last-child {
+        color: var(--muted);
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
+      }
+      .session-list {
+        max-height: calc(100vh - 190px);
+        overflow-y: auto;
+        padding: 6px;
+      }
+      .session {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        background: transparent;
+        padding: 10px 11px;
+        cursor: pointer;
+      }
+      .session:hover {
+        background: #f8f9fb;
+      }
+      .session[aria-current='true'] {
+        background: var(--accent-soft);
+        border-color: #d6e0fd;
+      }
+      .session .row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .session .title {
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .session .meta {
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .session .snippet {
+        margin-top: 5px;
+        color: #475467;
+        font-size: 12.5px;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 11.5px;
+        font-weight: 600;
+        white-space: nowrap;
+        background: #eef0f3;
+        color: #475467;
+      }
+      .badge.ready,
+      .badge.succeeded {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+      .badge.failed {
+        background: var(--red-soft);
+        color: var(--red);
+      }
+      .badge.queued,
+      .badge.running {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+      .detail-panel {
+        padding: 20px 22px 26px;
+        min-height: 320px;
+      }
+      .empty,
+      .empty-large {
+        color: var(--muted);
+        text-align: center;
+        padding: 34px 16px;
+        font-size: 13px;
+      }
+      .empty-large {
+        padding: 18vh 16px;
+      }
+      .detail-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .detail-head h2 {
+        margin: 0;
+        font-size: 19px;
+        letter-spacing: -0.01em;
+      }
+      #detail-url {
+        display: inline-block;
+        margin-top: 3px;
+        color: var(--accent);
+        font-size: 12.5px;
+        text-decoration: none;
+        word-break: break-all;
+      }
+      #detail-url:hover {
+        text-decoration: underline;
+      }
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px 18px;
+        margin: 18px 0 0;
+        padding: 14px 0;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+      .facts div {
+        min-width: 0;
+      }
+      .facts dt {
+        color: var(--muted);
+        font-size: 11.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .facts dd {
+        margin: 2px 0 0;
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .mono {
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      h3 {
+        margin: 22px 0 8px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+      }
+      .summary {
+        margin: 0;
+        padding: 14px;
+        background: #fafbfc;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 40vh;
+        overflow: auto;
+      }
+      .hint {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+      .error {
+        color: var(--red);
+        font-size: 12.5px;
+        white-space: pre-wrap;
+      }
+      .pipeline-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .pipeline-buttons button {
+        text-align: left;
+        padding: 8px 12px;
+      }
+      .pipeline-buttons small {
+        display: block;
+        color: var(--muted);
+        font-weight: 400;
+        font-size: 11.5px;
+      }
+      .run-panel {
+        margin-top: 16px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 14px;
+        background: #fafbfc;
+      }
+      .run-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .output {
+        margin: 10px 0 0;
+        padding: 10px;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        font-family: var(--mono);
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 260px;
+        overflow: auto;
+      }
+      .error-output {
+        border-color: #f3c6c2;
+      }
+      .run-history {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .run-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+        text-align: left;
+        padding: 7px 10px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: #fafbfc;
+      }
+      .run-item:hover {
+        border-color: var(--line);
+      }
+      .run-item .meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 22px;
+        transform: translateX(-50%);
+        background: #1f2430;
+        color: #fff;
+        padding: 9px 14px;
+        border-radius: 9px;
+        font-size: 13px;
+        max-width: min(560px, calc(100vw - 40px));
+        box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+      }
+      @media (max-width: 900px) {
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+        .session-list {
+          max-height: 45vh;
+        }
+        .empty-large {
+          padding: 8vh 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Highlite sessions</h1>
+        <p id="status-line">Connecting…</p>
+      </div>
+      <div class="actions">
+        <button id="refresh" type="button">Refresh</button>
+        <button id="signout" type="button" class="ghost" hidden>Change token</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="gate" class="gate" hidden>
+        <h2>Read token required</h2>
+        <p>
+          Enter <code>HIGHLITE_RELAY_READ_TOKEN</code> to view sessions. The token is kept in this
+          tab only.
+        </p>
+        <form id="token-form">
+          <input
+            id="token-input"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Read token"
+            aria-label="Read token"
+          />
+          <button class="primary" type="submit">Open</button>
+        </form>
+        <p id="gate-error" class="error" hidden></p>
+      </section>
+
+      <div id="workspace" class="workspace" hidden>
+        <aside class="panel">
+          <div class="panel-head"><span>Sessions</span><span id="session-count"></span></div>
+          <div id="session-list" class="session-list"></div>
+          <p id="empty" class="empty" hidden>
+            No sessions yet. Start a capture from the embedded app.
+          </p>
+        </aside>
+
+        <section class="panel detail-panel">
+          <div id="detail-empty" class="empty-large">
+            Select a session to see its summary and pipelines.
+          </div>
+          <article id="detail" hidden>
+            <div class="detail-head">
+              <div>
+                <h2 id="detail-title"></h2>
+                <a id="detail-url" target="_blank" rel="noreferrer"></a>
+              </div>
+              <span id="detail-status" class="badge"></span>
+            </div>
+            <dl class="facts">
+              <div>
+                <dt>Session</dt>
+                <dd id="detail-id" class="mono"></dd>
+              </div>
+              <div>
+                <dt>Received</dt>
+                <dd id="detail-received"></dd>
+              </div>
+              <div>
+                <dt>Duration</dt>
+                <dd id="detail-duration"></dd>
+              </div>
+              <div>
+                <dt>Size</dt>
+                <dd id="detail-size"></dd>
+              </div>
+            </dl>
+            <p id="detail-error" class="error" hidden></p>
+            <h3>Summary</h3>
+            <pre id="detail-summary" class="summary"></pre>
+
+            <h3>Pipelines</h3>
+            <p id="pipeline-hint" class="hint"></p>
+            <div id="pipeline-buttons" class="pipeline-buttons"></div>
+
+            <div id="run-panel" class="run-panel" hidden>
+              <div class="run-head">
+                <span id="run-title"></span>
+                <span id="run-status" class="badge"></span>
+              </div>
+              <pre id="run-stdout" class="output" hidden></pre>
+              <pre id="run-stderr" class="output error-output" hidden></pre>
+              <p id="run-error" class="error" hidden></p>
+            </div>
+
+            <h3>Recent runs</h3>
+            <div id="run-history" class="run-history"></div>
+          </article>
+        </section>
+      </div>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script>
+      const TOKEN_KEY = 'highlite.relay.token';
+      const state = {
+        token: '',
+        sessions: [],
+        pipelines: [],
+        pipelinesEnabled: false,
+        selected: null,
+        pollTimer: null,
+      };
+
+      const $ = (id) => document.getElementById(id);
+      const listEl = $('session-list');
+      const gateEl = $('gate');
+      const workspaceEl = $('workspace');
+      const toastEl = $('toast');
+
+      function setStatus(text) {
+        $('status-line').textContent = text;
+      }
+
+      function toast(message) {
+        toastEl.textContent = message;
+        toastEl.hidden = false;
+        clearTimeout(toastEl._timer);
+        toastEl._timer = setTimeout(() => {
+          toastEl.hidden = true;
+        }, 6000);
+      }
+
+      function readTokenFromHash() {
+        const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+        const token = params.get('token');
+        if (!token) return '';
+        history.replaceState(null, '', location.pathname);
+        return token;
+      }
+
+      function storeToken(token) {
+        state.token = token;
+        if (token) sessionStorage.setItem(TOKEN_KEY, token);
+        else sessionStorage.removeItem(TOKEN_KEY);
+      }
+
+      function showGate(message) {
+        storeToken('');
+        workspaceEl.hidden = true;
+        gateEl.hidden = false;
+        $('signout').hidden = true;
+        $('gate-error').hidden = !message;
+        $('gate-error').textContent = message || '';
+        $('token-input').focus();
+        setStatus('Waiting for a read token');
+      }
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          ...options,
+          headers: {
+            Authorization: `Bearer ${state.token}`,
+            Accept: 'application/json',
+            ...(options.headers || {}),
+          },
+        });
+        const text = await response.text();
+        let body = null;
+        if (text) {
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = text;
+          }
+        }
+        if (response.status === 401) {
+          showGate('The read token was rejected.');
+          throw new Error('Unauthorized');
+        }
+        if (!response.ok) {
+          throw new Error((body && body.error) || `Request failed with HTTP ${response.status}`);
+        }
+        return body;
+      }
+
+      function formatDuration(ms) {
+        if (ms === null || ms === undefined) return '—';
+        if (ms < 1000) return `${ms} ms`;
+        const seconds = ms / 1000;
+        if (seconds < 60) return `${seconds.toFixed(1)} s`;
+        const minutes = Math.floor(seconds / 60);
+        return `${minutes}m ${Math.round(seconds % 60)}s`;
+      }
+
+      function formatBytes(bytes) {
+        if (bytes === null || bytes === undefined) return '—';
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      }
+
+      function formatTime(ms) {
+        if (!ms) return '—';
+        return new Date(ms).toLocaleString();
+      }
+
+      function timeAgo(ms) {
+        const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+        if (seconds < 60) return `${seconds}s ago`;
+        const minutes = Math.round(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.round(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        return `${Math.round(hours / 24)}d ago`;
+      }
+
+      function titleFor(session) {
+        return session.pageTitle || session.sessionId;
+      }
+
+      function summarySnippet(summary) {
+        if (!summary) return 'No summary available.';
+        const line = summary
+          .split('\n')
+          .map((value) => value.trim())
+          .find((value) => value && !value.startsWith('#'));
+        return line || 'Summary available.';
+      }
+
+      function renderList() {
+        listEl.replaceChildren();
+        $('session-count').textContent = String(state.sessions.length);
+        $('empty').hidden = state.sessions.length !== 0;
+
+        for (const session of state.sessions) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'session';
+          button.dataset.id = session.sessionId;
+          button.setAttribute(
+            'aria-current',
+            state.selected && state.selected.sessionId === session.sessionId ? 'true' : 'false',
+          );
+
+          const row = document.createElement('div');
+          row.className = 'row';
+          const title = document.createElement('span');
+          title.className = 'title';
+          title.textContent = titleFor(session);
+          const badge = document.createElement('span');
+          badge.className = `badge ${session.status}`;
+          badge.textContent = session.status;
+          row.append(title, badge);
+
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+          const bits = [timeAgo(session.receivedAtMs), formatDuration(session.durationMs)];
+          if (session.pageUrl) {
+            try {
+              bits.push(new URL(session.pageUrl).host);
+            } catch {
+              bits.push(session.pageUrl);
+            }
+          }
+          meta.textContent = bits.filter(Boolean).join(' · ');
+
+          const snippet = document.createElement('div');
+          snippet.className = 'snippet';
+          snippet.textContent = session.summary
+            ? summarySnippet(session.summary)
+            : session.error || 'No summary available.';
+
+          button.append(row, meta, snippet);
+          button.addEventListener('click', () => selectSession(session));
+          listEl.append(button);
+        }
+      }
+
+      function renderDetail(session) {
+        $('detail-empty').hidden = true;
+        $('detail').hidden = false;
+        $('detail-title').textContent = titleFor(session);
+        $('detail-status').className = `badge ${session.status}`;
+        $('detail-status').textContent = session.status;
+        $('detail-id').textContent = session.sessionId;
+        $('detail-received').textContent = `${formatTime(session.receivedAtMs)} (${timeAgo(
+          session.receivedAtMs,
+        )})`;
+        $('detail-duration').textContent = formatDuration(session.durationMs);
+        $('detail-size').textContent = formatBytes(session.bytes);
+
+        const url = $('detail-url');
+        if (session.pageUrl) {
+          url.href = session.pageUrl;
+          url.textContent = session.pageUrl;
+          url.hidden = false;
+        } else {
+          url.removeAttribute('href');
+          url.textContent = '';
+          url.hidden = true;
+        }
+
+        $('detail-error').hidden = !session.error;
+        $('detail-error').textContent = session.error || '';
+        $('detail-summary').textContent = session.summary || 'No summary was produced.';
+        renderPipelines(session);
+        void loadRuns(session.sessionId);
+      }
+
+      function renderPipelines(session) {
+        const container = $('pipeline-buttons');
+        container.replaceChildren();
+        const hint = $('pipeline-hint');
+
+        if (!state.pipelinesEnabled) {
+          hint.textContent =
+            'Pipelines are disabled. Set HIGHLITE_RELAY_ALLOW_PIPELINES=true and add pipelines.json to the relay data directory.';
+          return;
+        }
+        if (state.pipelines.length === 0) {
+          hint.textContent = 'No pipelines are configured in pipelines.json.';
+          return;
+        }
+
+        hint.textContent =
+          session.status === 'ready'
+            ? 'Run a pipeline against this session bundle.'
+            : 'This session did not compile, so pipelines are unavailable.';
+
+        for (const pipeline of state.pipelines) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.disabled = session.status !== 'ready';
+          const name = document.createElement('span');
+          name.textContent = pipeline.name;
+          button.append(name);
+          if (pipeline.description) {
+            const description = document.createElement('small');
+            description.textContent = pipeline.description;
+            button.append(description);
+          }
+          button.addEventListener('click', () => runPipeline(session, pipeline, button));
+          container.append(button);
+        }
+      }
+
+      function setRunPanel(run) {
+        $('run-panel').hidden = false;
+        $('run-title').textContent = run.pipeline;
+        const badge = $('run-status');
+        badge.className = `badge ${run.status}`;
+        badge.textContent = run.status;
+
+        const stdout = $('run-stdout');
+        stdout.hidden = !run.stdout;
+        stdout.textContent = run.stdout || '';
+
+        const stderr = $('run-stderr');
+        stderr.hidden = !run.stderr;
+        stderr.textContent = run.stderr || '';
+
+        $('run-error').hidden = !run.error;
+        $('run-error').textContent = run.error || '';
+      }
+
+      async function runPipeline(session, pipeline, button) {
+        button.disabled = true;
+        stopPolling();
+        try {
+          const run = await api(
+            `/v1/sessions/${encodeURIComponent(session.sessionId)}/pipelines/${encodeURIComponent(
+              pipeline.name,
+            )}`,
+            { method: 'POST' },
+          );
+          setRunPanel(run);
+          pollRun(run.runId, session.sessionId);
+        } catch (error) {
+          toast(error.message);
+        } finally {
+          button.disabled = session.status !== 'ready';
+        }
+      }
+
+      function stopPolling() {
+        if (state.pollTimer) {
+          clearTimeout(state.pollTimer);
+          state.pollTimer = null;
+        }
+      }
+
+      function pollRun(runId, sessionId) {
+        stopPolling();
+        state.pollTimer = setTimeout(async () => {
+          try {
+            const run = await api(`/v1/runs/${encodeURIComponent(runId)}`);
+            setRunPanel(run);
+            if (run.status === 'queued' || run.status === 'running') {
+              pollRun(runId, sessionId);
+              return;
+            }
+            if (state.selected && state.selected.sessionId === sessionId) {
+              void loadRuns(sessionId);
+            }
+          } catch (error) {
+            toast(error.message);
+          }
+        }, 700);
+      }
+
+      async function loadRuns(sessionId) {
+        const container = $('run-history');
+        try {
+          const body = await api(`/v1/sessions/${encodeURIComponent(sessionId)}/runs`);
+          const runs = (body && body.runs) || [];
+          container.replaceChildren();
+          if (runs.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'hint';
+            empty.textContent = 'No pipeline runs for this session yet.';
+            container.append(empty);
+            return;
+          }
+          for (const run of runs.slice(0, 20)) {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'run-item';
+            const left = document.createElement('span');
+            const name = document.createElement('span');
+            name.textContent = run.pipeline;
+            const meta = document.createElement('span');
+            meta.className = 'meta';
+            meta.textContent = ` · ${formatTime(run.createdAtMs)}`;
+            left.append(name, meta);
+            const badge = document.createElement('span');
+            badge.className = `badge ${run.status}`;
+            badge.textContent = run.status;
+            item.append(left, badge);
+            item.addEventListener('click', () => setRunPanel(run));
+            container.append(item);
+          }
+        } catch (error) {
+          container.replaceChildren();
+          const failure = document.createElement('p');
+          failure.className = 'hint';
+          failure.textContent = error.message;
+          container.append(failure);
+        }
+      }
+
+      function selectSession(session) {
+        state.selected = session;
+        stopPolling();
+        $('run-panel').hidden = true;
+        renderList();
+        renderDetail(session);
+      }
+
+      async function loadWorkspace() {
+        setStatus('Loading sessions…');
+        try {
+          const [sessions, pipelines] = await Promise.all([
+            api('/v1/sessions'),
+            api('/v1/pipelines'),
+          ]);
+          state.sessions = (sessions && sessions.sessions) || [];
+          state.pipelines = (pipelines && pipelines.pipelines) || [];
+          state.pipelinesEnabled = Boolean(pipelines && pipelines.enabled);
+
+          gateEl.hidden = true;
+          workspaceEl.hidden = false;
+          $('signout').hidden = false;
+
+          if (state.selected) {
+            const current = state.sessions.find(
+              (session) => session.sessionId === state.selected.sessionId,
+            );
+            if (current) {
+              state.selected = current;
+              renderDetail(current);
+            } else {
+              state.selected = null;
+              $('detail').hidden = true;
+              $('detail-empty').hidden = false;
+              $('run-panel').hidden = true;
+            }
+          } else {
+            $('detail').hidden = true;
+            $('detail-empty').hidden = false;
+          }
+
+          renderList();
+          setStatus(
+            `${state.sessions.length} session${state.sessions.length === 1 ? '' : 's'} · ${
+              state.pipelinesEnabled
+                ? `${state.pipelines.length} pipeline${state.pipelines.length === 1 ? '' : 's'} enabled`
+                : 'pipelines disabled'
+            }`,
+          );
+        } catch (error) {
+          if (state.token && error.message !== 'Unauthorized') {
+            setStatus(error.message);
+            toast(error.message);
+          }
+        }
+      }
+
+      $('token-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const token = $('token-input').value.trim();
+        if (!token) return;
+        storeToken(token);
+        $('token-input').value = '';
+        $('gate-error').hidden = true;
+        void loadWorkspace();
+      });
+
+      $('refresh').addEventListener('click', () => void loadWorkspace());
+
+      $('signout').addEventListener('click', () => {
+        stopPolling();
+        state.selected = null;
+        state.sessions = [];
+        state.pipelines = [];
+        showGate('');
+      });
+
+      const initialToken = readTokenFromHash() || sessionStorage.getItem(TOKEN_KEY) || '';
+      if (initialToken) {
+        storeToken(initialToken);
+        void loadWorkspace();
+      } else {
+        showGate('');
+      }
+    </script>
+  </body>
+</html>

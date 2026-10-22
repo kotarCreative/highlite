@@ -163,6 +163,13 @@ verification, and deployment details.
 The demo reads `VITE_HIGHLITE_RELAY_URL` and `VITE_HIGHLITE_RELAY_TOKEN` from `.env`
 (copy `.env.example`) and uploads automatically when they are set.
 
+Add `--ui` (or set `HIGHLITE_RELAY_UI=true`) to serve a local sessions browser at `/`.
+It lists ingested sessions, shows their summaries, and runs pipelines defined in
+`<data-dir>/pipelines.json` when `HIGHLITE_RELAY_ALLOW_PIPELINES=true`; pipelines require
+a loopback bind and receive the compiled bundle paths in their environment. Startup
+prints a URL with the read token in the fragment. See the
+[relay README](crates/highlite-relay/README.md) for the pipeline format and run states.
+
 Run `pnpm dev` and open the demo to try the analytics walkthrough. Its local preview shows the exact manifest and summary assembled by the SDK; it does not upload captures.
 
 ## Keyboard shortcuts

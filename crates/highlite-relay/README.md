@@ -58,12 +58,18 @@ manifest's creation time.
 
 ## Endpoints
 
-| Method | Path                           | Auth   | Purpose                           |
-| ------ | ------------------------------ | ------ | --------------------------------- |
-| POST   | `/v1/sessions`                 | ingest | Upload `application/zip` capture  |
-| GET    | `/v1/sessions/{id}`            | read   | Status, summary, and bundle links |
-| GET    | `/v1/sessions/{id}/bundle.zip` | read   | Download the compiled bundle      |
-| GET    | `/healthz`                     | none   | Liveness check                    |
+| Method | Path                                 | Auth   | Purpose                           |
+| ------ | ------------------------------------ | ------ | --------------------------------- |
+| POST   | `/v1/sessions`                       | ingest | Upload `application/zip` capture  |
+| GET    | `/v1/sessions`                       | read   | List stored sessions              |
+| GET    | `/v1/sessions/{id}`                  | read   | Status, summary, and bundle links |
+| GET    | `/v1/sessions/{id}/bundle.zip`       | read   | Download the compiled bundle      |
+| GET    | `/v1/sessions/{id}/runs`             | read   | Pipeline runs for a session       |
+| POST   | `/v1/sessions/{id}/pipelines/{name}` | read   | Start a pipeline run              |
+| GET    | `/v1/pipelines`                      | read   | Configured pipelines              |
+| GET    | `/v1/runs/{id}`                      | read   | Run status, exit code, and output |
+| GET    | `/healthz`                           | none   | Liveness check                    |
+| GET    | `/`                                  | none   | Local sessions UI                 |
 
 ```sh
 curl -X POST http://127.0.0.1:8787/v1/sessions \
@@ -82,6 +88,89 @@ curl -H "Authorization: Bearer $HIGHLITE_READ_TOKEN" \
 A successful POST returns the session metadata immediately, or `200` when the same
 session was already compiled. Uploads are compiled synchronously; duplicate concurrent
 uploads for one session return `409`.
+
+## Local sessions UI
+
+Serve a single-page session browser at `/` with `--ui` or `HIGHLITE_RELAY_UI=true`:
+
+```sh
+pnpm relay -- --env-file ./relay.env --ui
+```
+
+Startup prints a URL with the read token in the fragment:
+
+```text
+highlite sessions UI: http://127.0.0.1:8787/#token=...
+```
+
+The fragment is never sent to the server; the page moves it into `sessionStorage` and
+clears the address bar. The UI lists sessions newest first, shows page, duration, size,
+and the compiled summary, and runs configured pipelines. Uploads still come from the
+embedded SDK; the UI never accepts file imports.
+
+Same-origin requests from the bundled UI are accepted even when
+`HIGHLITE_RELAY_ALLOWED_ORIGINS` is empty. All other origins still need to be allowlisted.
+
+## Pipelines
+
+Pipelines are trusted local commands attached to a compiled session. They are disabled by
+default. Enable them with a loopback bind:
+
+```sh
+HIGHLITE_RELAY_ALLOW_PIPELINES=true
+HIGHLITE_RELAY_PIPELINE_CONCURRENCY=2
+# HIGHLITE_RELAY_PIPELINES_FILE=./pipelines.json
+```
+
+The config defaults to `<data-dir>/pipelines.json` and is read at startup; restart the
+relay after editing it:
+
+```json
+{
+  "pipelines": [
+    {
+      "name": "bug-report",
+      "description": "Draft a bug report from this session",
+      "command": "./scripts/bug-report.sh",
+      "cwd": ".",
+      "timeoutSeconds": 120,
+      "env": { "TEAM": "web" }
+    }
+  ]
+}
+```
+
+- `name` (required): 1–64 letters, digits, `-`, or `_`; must be unique.
+- `command` (required): run through `/bin/sh -c`, or `cmd /C` on Windows.
+- `cwd`: working directory; defaults to the relay's working directory. Relative paths are
+  resolved from there.
+- `timeoutSeconds`: defaults to `300`. A timed-out command is killed.
+- `env`: additional environment variables for the command.
+
+Commands receive absolute paths and the session identity:
+
+| Variable                 | Value                         |
+| ------------------------ | ----------------------------- |
+| `HIGHLITE_SESSION_ID`    | Session id                    |
+| `HIGHLITE_RUN_ID`        | Run id                        |
+| `HIGHLITE_BUNDLE_DIR`    | Compiled bundle directory     |
+| `HIGHLITE_BUNDLE_ZIP`    | Zipped bundle in `downloads/` |
+| `HIGHLITE_SUMMARY_PATH`  | `summary.md`                  |
+| `HIGHLITE_MANIFEST_PATH` | `manifest.json`               |
+| `HIGHLITE_BUNDLE_JSON`   | `bundle.json`                 |
+| `HIGHLITE_SCRAWL_JSON`   | `scrawl.json`                 |
+| `HIGHLITE_ANALYSIS_JSON` | `analysis.json`               |
+
+A run can do anything a local shell command can, including posting the summary to an
+agent or an issue tracker. Only loopback binds may enable pipelines. The relay also
+removes `HIGHLITE_RELAY_INGEST_TOKEN`, `HIGHLITE_RELAY_READ_TOKEN`, and
+`HIGHLITE_RELAY_WEBHOOK_SECRET` from the child environment.
+
+`POST /v1/sessions/{id}/pipelines/{name}` returns `202` with a run record. Poll
+`GET /v1/runs/{id}` for `queued`, `running`, `succeeded`, or `failed`, plus the exit code
+and stdout/stderr (each truncated to 64 KiB). Runs queue up to the configured
+concurrency. Anything holding the read token can start a pipeline, so keep the relay
+local.
 
 ## Consuming compiled sessions
 
@@ -222,9 +311,11 @@ server side; the browser does not need it.
 
 ## Security controls
 
-- Separate bearer tokens for ingestion and reads, compared in constant time.
+- Separately scoped bearer tokens for ingestion and reads, compared in constant time.
 - Configuration comes from an explicit env file; keep it out of version control and mode
   `0600` because it contains tokens and the webhook secret.
+- Pipelines are disabled by default, require a loopback bind, run without relay secrets in
+  their environment, and are bounded by a timeout and concurrency limit.
 - Optional `Host` allowlist to reduce DNS-rebinding exposure.
 - Optional CORS `Origin` allowlist; disallowed browser origins receive `403`.
 - Upload size, uncompressed size, file-count, path-depth, and symlink limits.
@@ -251,6 +342,7 @@ highlite-relay-data/
   bundles/<id>/           compiled bundle directory
   downloads/<id>.zip      zipped compiled bundle
   uploads/<id>.zip        original upload, only with HIGHLITE_RELAY_KEEP_UPLOADS
+  runs/<run-id>.json      pipeline run status, exit code, and output
 ```
 
 Point `HIGHLITE_RELAY_DATA_DIR` at durable storage and back it up according to your retention
