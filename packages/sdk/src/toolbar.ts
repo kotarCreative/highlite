@@ -147,29 +147,29 @@ const ANNOTATION_TOOLS: ReadonlyArray<{
   {
     kind: 'freehand',
     label: 'Freehand annotation',
-    hint: 'Freehand — draw a stroke (F)',
-    shortcut: 'F',
+    hint: 'Freehand — draw a stroke (Meta+F)',
+    shortcut: 'Meta+F',
     icon: ICON_PEN,
   },
   {
     kind: 'circle',
     label: 'Circle annotation',
-    hint: 'Circle — drag to outline an area (C)',
-    shortcut: 'C',
+    hint: 'Circle — drag to outline an area (Meta+C)',
+    shortcut: 'Meta+C',
     icon: ICON_CIRCLE,
   },
   {
     kind: 'arrow',
     label: 'Arrow annotation',
-    hint: 'Arrow — drag to point at something (A)',
-    shortcut: 'A',
+    hint: 'Arrow — drag to point at something (Meta+A)',
+    shortcut: 'Meta+A',
     icon: ICON_ARROW,
   },
   {
     kind: 'highlight',
     label: 'Highlight annotation',
-    hint: 'Highlight — drag to shade an area (H)',
-    shortcut: 'H',
+    hint: 'Highlight — drag to shade an area (Meta+H)',
+    shortcut: 'Meta+H',
     icon: ICON_HIGHLIGHT,
   },
 ];
@@ -325,8 +325,8 @@ export class CaptureToolbar {
     this.#interactButton = this.#iconButton(
       'Interact with page',
       ICON_POINTER,
-      'Interact — click the page normally (V)',
-      'V',
+      'Interact — click the page normally (Meta+V)',
+      'Meta+V',
     );
     this.#interactButton.setAttribute('aria-pressed', 'true');
     this.#tools.append(this.#interactButton);
@@ -341,24 +341,24 @@ export class CaptureToolbar {
     this.#markButton.type = 'button';
     this.#markButton.className = 'mark';
     this.#markButton.setAttribute('aria-label', 'Mark a moment in Highlite');
-    this.#markButton.setAttribute('aria-keyshortcuts', 'M');
-    this.#markButton.title = 'Mark this moment (M)';
+    this.#markButton.setAttribute('aria-keyshortcuts', 'Meta+M');
+    this.#markButton.title = 'Mark this moment (Meta+M)';
     this.#markButton.innerHTML = `${iconSvg(ICON_BOOKMARK)}<span>Mark</span>`;
 
     this.#cancelButton = document.createElement('button');
     this.#cancelButton.type = 'button';
     this.#cancelButton.className = 'discard';
     this.#cancelButton.setAttribute('aria-label', 'Discard Highlite session');
-    this.#cancelButton.setAttribute('aria-keyshortcuts', 'D');
-    this.#cancelButton.dataset.tooltip = 'Discard Highlite session (D)';
+    this.#cancelButton.setAttribute('aria-keyshortcuts', 'Meta+D');
+    this.#cancelButton.dataset.tooltip = 'Discard Highlite session (Meta+D)';
     this.#cancelButton.innerHTML = iconSvg(ICON_TRASH);
 
     this.#stopButton = document.createElement('button');
     this.#stopButton.type = 'button';
     this.#stopButton.className = 'stop';
     this.#stopButton.setAttribute('aria-label', 'Stop Highlite');
-    this.#stopButton.setAttribute('aria-keyshortcuts', 'S');
-    this.#stopButton.title = 'Stop Highlite (S)';
+    this.#stopButton.setAttribute('aria-keyshortcuts', 'Meta+S');
+    this.#stopButton.title = 'Stop Highlite (Meta+S)';
     this.#stopButton.innerHTML = `${iconSvg(ICON_STOP)}<span>Stop</span>`;
 
     dockBar.append(
@@ -766,7 +766,7 @@ export class CaptureToolbar {
 
   readonly #onKeydown = (event: KeyboardEvent): void => {
     if (event.defaultPrevented || event.isComposing || event.repeat) return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.ctrlKey || event.altKey || event.shiftKey) return;
     const target = event.target;
     if (
       target instanceof HTMLElement &&
@@ -796,6 +796,8 @@ export class CaptureToolbar {
       this.#setAnnotating(false);
       return;
     }
+
+    if (!event.metaKey) return;
 
     const tool = TOOL_SHORTCUTS[key];
     if (tool) {
