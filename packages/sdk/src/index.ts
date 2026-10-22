@@ -12,7 +12,7 @@ import {
   type Target,
 } from '@highlite/core';
 import { DisplayMediaFrameProvider } from './frame-provider';
-import { CaptureToolbar } from './toolbar';
+import { CaptureToolbar, type PermissionDecision, type PermissionRequest } from './toolbar';
 
 export type {
   Annotation,
@@ -90,6 +90,39 @@ type CaptureState =
   | 'cancelled'
   | 'destroyed';
 type MicrophoneState = 'active' | 'denied' | 'disabled';
+
+interface PermissionStep extends Omit<PermissionRequest, 'step' | 'total'> {
+  waitingMessage: string;
+}
+
+const MICROPHONE_PERMISSION: PermissionStep = {
+  kind: 'microphone',
+  title: 'Microphone',
+  description:
+    'Highlite records your spoken explanation so an agent can follow the reasoning behind each interaction, not just the clicks.',
+  details: [
+    'Audio is captured in this tab only while a recording is running.',
+    'The SDK does not upload audio by itself.',
+  ],
+  allowLabel: 'Allow microphone',
+  skipLabel: 'Continue without audio',
+  waitingMessage: 'Waiting for your browser to confirm microphone access…',
+};
+
+const DISPLAY_PERMISSION: PermissionStep = {
+  kind: 'display',
+  title: 'Current tab',
+  description:
+    'Highlite saves a few still screenshots at the moments that matter so an agent can see the page you were describing.',
+  details: [
+    'Only still frames at clicks, marks, and annotations — not continuous video.',
+    'The current tab is preselected in the browser share picker; confirm it to continue.',
+    'Captured pixels are not automatically redacted, so avoid sensitive content.',
+  ],
+  allowLabel: 'Share this tab',
+  skipLabel: 'Continue without screenshots',
+  waitingMessage: 'Waiting for your browser to confirm screen sharing…',
+};
 
 const DEFAULT_REDACT_SELECTORS = [
   '[data-private]',
@@ -424,12 +457,37 @@ class Highlite implements HighliteController {
   }
 
   async #beginCapture(): Promise<void> {
-    const tasks: Promise<void>[] = [];
-    if (this.#captureOptions.microphone !== false) tasks.push(this.#startMicrophone());
-    else this.#microphoneState = 'disabled';
-    if (this.#frameProvider) tasks.push(this.#startFrames());
+    const microphoneEnabled = this.#captureOptions.microphone !== false;
+    const microphonePreApproved = microphoneEnabled ? await this.#hasMicrophonePermission() : false;
+    if (!microphoneEnabled) this.#microphoneState = 'disabled';
 
-    await Promise.allSettled(tasks);
+    const steps: Array<{ step: PermissionStep; preApproved: boolean }> = [];
+    if (microphoneEnabled) {
+      steps.push({ step: MICROPHONE_PERMISSION, preApproved: microphonePreApproved });
+    }
+    if (this.#frameProvider) steps.push({ step: DISPLAY_PERMISSION, preApproved: false });
+
+    const promptTotal = steps.filter((entry) => !entry.preApproved).length;
+    let promptNumber = 0;
+
+    for (const { step, preApproved } of steps) {
+      if (this.#state !== 'starting') break;
+      let decision: PermissionDecision = 'granted';
+      if (!preApproved) {
+        promptNumber += 1;
+        decision = await this.#askPermission(step, promptNumber, promptTotal);
+        if (this.#state !== 'starting') break;
+      }
+      if (decision === 'skipped') {
+        if (step.kind === 'microphone') this.#microphoneState = 'disabled';
+        else this.#addWarning('Visual evidence unavailable: screen sharing was not approved.');
+        continue;
+      }
+      if (step.kind === 'microphone') await this.#startMicrophone();
+      else await this.#startFrames();
+      this.#toolbar?.dismissPermission();
+    }
+
     if (this.#state !== 'starting') {
       await this.#stopRecorderAndDiscard();
       await this.#stopFrameProvider();
@@ -457,6 +515,30 @@ class Highlite implements HighliteController {
     if (this.#frameAvailable) {
       void this.#trackCapture(this.#captureKeyframe('interaction', undefined, undefined));
     }
+  }
+
+  async #hasMicrophonePermission(): Promise<boolean> {
+    const permissions = navigator.permissions;
+    if (!permissions?.query) return false;
+    try {
+      const status = await permissions.query({ name: 'microphone' as PermissionName });
+      return status.state === 'granted';
+    } catch {
+      return false;
+    }
+  }
+
+  async #askPermission(
+    step: PermissionStep,
+    stepNumber: number,
+    total: number,
+  ): Promise<PermissionDecision> {
+    const toolbar = this.#toolbar;
+    if (!toolbar) return 'granted';
+    const { waitingMessage, ...request } = step;
+    const decision = await toolbar.requestPermission({ ...request, step: stepNumber, total });
+    if (decision === 'granted') toolbar.setPermissionWaiting(waitingMessage);
+    return decision;
   }
 
   async #startMicrophone(): Promise<void> {

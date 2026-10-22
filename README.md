@@ -4,7 +4,7 @@ Highlite is an embeddable browser SDK for capturing narrated, visually contextua
 
 ## Status
 
-The repository is being built in milestones. The current slice includes the typed timeline, a floating Shadow DOM toolbar, microphone and permission-based frame capture, click/scroll/SPA-route context, DOM targets, four annotation tools, deterministic Markdown, ZIP export, and an interactive analytics demo. The canonical compiler is the Rust crate [`crates/highlite-compiler`](crates/highlite-compiler); it selects keyframes, aligns narration by clause, plans DOM-target crops, transcribes audio in the compile step, burns annotations into cropped frames, renders a contact sheet, and writes an agent bundle next to the handoff summary. It is checked against shared golden fixtures in [`fixtures/`](fixtures). See [the implementation notes](docs/implementation-notes.md) for browser constraints and progress.
+The repository is being built in milestones. The current slice includes the typed timeline, a floating Shadow DOM toolbar with one-at-a-time permission prompts, microphone and permission-based frame capture, click/scroll/SPA-route context, DOM targets, four annotation tools, deterministic Markdown, ZIP export, and an interactive analytics demo. The canonical compiler is the Rust crate [`crates/highlite-compiler`](crates/highlite-compiler); it selects keyframes, aligns narration by clause, plans DOM-target crops, transcribes audio in the compile step, burns annotations into cropped frames, renders a contact sheet, and writes an agent bundle next to the handoff summary. It is checked against shared golden fixtures in [`fixtures/`](fixtures). See [the implementation notes](docs/implementation-notes.md) for browser constraints and progress.
 
 ## Development
 
@@ -92,7 +92,8 @@ const capture = createHighlite({
   },
 });
 
-// Call from a user gesture. Screen sharing, when enabled, opens a browser prompt.
+// Call from a user gesture. Permissions are requested one at a time; the
+// browser's share picker opens with the current tab preselected.
 await capture.start();
 capture.mark('Retention metric selected');
 const bundle = await capture.stop();
@@ -100,7 +101,7 @@ await capture.export(); // Downloads a ZIP with manifest, summary, context and m
 await capture.destroy();
 ```
 
-`capture.frames` defaults to `'prompt'`; use `'none'` to avoid requesting display capture or inject a `FrameProvider`. Permission denial is non-fatal, but the bundle will clearly report unavailable visual evidence. `ui: 'headless'` omits the toolbar while retaining the same API. The generated IIFE is `packages/sdk/dist/highlite.iife.js` and exposes the explicit `window.Highlite` namespace.
+`capture.frames` defaults to `'prompt'`; use `'none'` to avoid requesting display capture or inject a `FrameProvider`. Permission denial is non-fatal, but the bundle will clearly report unavailable visual evidence. `ui: 'headless'` omits the toolbar and sends permission requests directly; with the floating UI each permission gets its own modal and browser prompt before recording begins. If microphone access was already granted for the origin, the microphone step is skipped and recording starts with audio as soon as the remaining steps are confirmed. The generated IIFE is `packages/sdk/dist/highlite.iife.js` and exposes the explicit `window.Highlite` namespace.
 
 For a script-tag integration, serve that built file from your own static asset host:
 
@@ -124,6 +125,7 @@ Run `pnpm dev` and open the demo to try the analytics walkthrough. Its local pre
 ## Capture limitations
 
 - Screenshots only exist when a user-approved frame provider supplies actual pixels. Ordinary page DOM APIs are not treated as screenshots.
+- Browsers cannot skip their own screen-share picker. Highlite preselects the current tab and hides monitor/window options where Chromium supports it, but the user still confirms the share in the browser prompt.
 - Captured pixels are **not automatically redacted**. Review the shared surface and avoid capturing sensitive content.
 - Highlite does not record raw keystrokes or form values; query strings are omitted from URLs unless explicitly enabled.
 - Cross-origin iframes, closed shadow roots, and browser chrome are outside ordinary DOM inspection.

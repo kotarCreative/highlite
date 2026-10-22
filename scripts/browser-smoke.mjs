@@ -38,6 +38,10 @@ try {
   });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'permissions', {
+      configurable: true,
+      value: { query: async () => ({ state: 'prompt' }) },
+    });
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: {
@@ -61,6 +65,8 @@ try {
   await launcher.waitFor({ state: 'visible' });
   await launcher.click();
   await page.getByRole('button', { name: 'Start capture' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Allow microphone' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Share this tab' }).click();
   await page.getByRole('button', { name: 'Capture a marked moment' }).waitFor({ state: 'visible' });
 
   await page.getByRole('button', { name: 'Enter annotation mode' }).click();
@@ -189,6 +195,12 @@ try {
   await audioPage.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await audioPage.getByRole('button', { name: 'Open Highlite capture tools' }).click();
   await audioPage.getByRole('button', { name: 'Start capture' }).click();
+  assert.equal(
+    await audioPage.getByRole('dialog').getByRole('button', { name: 'Allow microphone' }).count(),
+    0,
+    'An existing microphone grant must skip its permission step.',
+  );
+  await audioPage.getByRole('dialog').getByRole('button', { name: 'Share this tab' }).click();
   await audioPage.getByRole('status').filter({ hasText: 'Microphone on.' }).waitFor();
   await audioPage.waitForTimeout(1200);
   await audioPage.getByRole('button', { name: 'Stop capture' }).click();
@@ -206,6 +218,10 @@ try {
 
   const pendingContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await pendingContext.addInitScript(() => {
+    Object.defineProperty(navigator, 'permissions', {
+      configurable: true,
+      value: { query: async () => ({ state: 'prompt' }) },
+    });
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: {
@@ -224,8 +240,11 @@ try {
   await cancelPage.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await cancelPage.getByRole('button', { name: 'Open Highlite capture tools' }).click();
   await cancelPage.getByRole('button', { name: 'Start capture' }).click();
-  await cancelPage.getByRole('button', { name: 'Discard capture' }).waitFor({ state: 'visible' });
-  await cancelPage.getByRole('button', { name: 'Discard capture' }).click();
+  await cancelPage.getByRole('dialog').getByRole('button', { name: 'Allow microphone' }).click();
+  await cancelPage
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Cancel capture and discard' })
+    .click();
   await cancelPage
     .getByRole('status')
     .filter({ hasText: 'Capture discarded. No bundle was created.' })
@@ -235,7 +254,6 @@ try {
     window.__resolveMicrophone({
       getTracks: () => [{ stop: () => (window.__microphoneTrackStopped = true) }],
     });
-    window.__rejectDisplay(new DOMException('Cancelled by test.', 'NotAllowedError'));
   });
   await cancelPage.waitForFunction(() => window.__microphoneTrackStopped === true);
 

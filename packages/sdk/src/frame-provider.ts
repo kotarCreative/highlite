@@ -1,5 +1,18 @@
 import type { FrameProvider } from '@highlite/core';
 
+interface CurrentTabDisplayOptions extends DisplayMediaStreamOptions {
+  /** Chromium-only: preselect the tab that is asking instead of the last shared surface. */
+  preferCurrentTab?: boolean;
+  /** Chromium-only: allow the current tab to appear in the picker (excluded by default). */
+  selfBrowserSurface?: 'include' | 'exclude';
+  /** Chromium-only: hide the "switch surface" control for the lifetime of the share. */
+  surfaceSwitching?: 'include' | 'exclude';
+  /** Chromium-only: keep entire monitors out of the picker. */
+  monitorTypeSurfaces?: 'include' | 'exclude';
+  /** Standard but missing from some TypeScript DOM libs. */
+  systemAudio?: 'include' | 'exclude';
+}
+
 export class DisplayMediaFrameProvider implements FrameProvider {
   #stream: MediaStream | undefined;
   #video: HTMLVideoElement | undefined;
@@ -11,10 +24,18 @@ export class DisplayMediaFrameProvider implements FrameProvider {
       throw new Error('Display capture is not supported by this browser.');
     }
 
-    this.#stream = await getDisplayMedia({
-      video: { frameRate: { ideal: 2, max: 5 } },
+    const options: CurrentTabDisplayOptions = {
+      video: { frameRate: { ideal: 2, max: 5 }, displaySurface: 'browser' },
       audio: false,
-    });
+      // The picker cannot be skipped, but these hints make the current tab the
+      // preselected surface instead of asking the user to hunt for it.
+      preferCurrentTab: true,
+      selfBrowserSurface: 'include',
+      surfaceSwitching: 'exclude',
+      monitorTypeSurfaces: 'exclude',
+      systemAudio: 'exclude',
+    };
+    this.#stream = await getDisplayMedia(options);
     for (const track of this.#stream.getVideoTracks()) {
       track.addEventListener('ended', () => this.#endedHandler?.(), { once: true });
     }
