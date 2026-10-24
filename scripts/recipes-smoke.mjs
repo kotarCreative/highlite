@@ -61,7 +61,7 @@ const remote = httpServer(async (request, response) => {
     );
     issues.push(input);
     response.statusCode = 201;
-    response.end(JSON.stringify({ id: '1', key: 'TEAM-1' }));
+    response.end(JSON.stringify({ id: String(issues.length), key: `TEAM-${issues.length}` }));
   }
 });
 
@@ -130,8 +130,12 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  async function openRecipes() {
+    await page.getByRole('button', { name: 'Recipes', exact: true }).click();
+    await page.waitForFunction(() => !document.getElementById('recipe-config-form').inert);
+  }
   await page.goto(`http://${address}/#token=smoke-read`);
-  await page.getByRole('button', { name: 'Recipes', exact: true }).click();
+  await openRecipes();
   await page.getByLabel('Jira site URL').fill(remoteUrl);
   await page.getByLabel('Jira account email').fill('tester@example.com');
   await page.getByLabel('Jira API token').fill('jira-smoke-secret');
@@ -141,6 +145,8 @@ try {
     .getByLabel('Custom analysis prompt')
     .fill('Focus on usability defects and preserve evidence references.');
   await page.getByLabel('Enable this recipe').check();
+  assert.equal(await page.getByLabel('After drafting').inputValue(), 'review');
+  await page.getByLabel('After drafting').selectOption('review');
   await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
   await page
     .getByText('Recipe saved. Jira credentials have not been verified.', { exact: false })
@@ -149,15 +155,18 @@ try {
   const fixture = JSON.parse(
     await readFile(new URL('../fixtures/capture.json', import.meta.url), 'utf8'),
   );
-  const manifest = { ...fixture.manifest, sessionId: 'jira-browser-smoke', keyframes: [] };
-  const zip = new JSZip();
-  zip.file('manifest.json', JSON.stringify(manifest));
-  const response = await fetch(`http://${address}/v1/sessions`, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer smoke-ingest', 'Content-Type': 'application/zip' },
-    body: await zip.generateAsync({ type: 'nodebuffer' }),
-  });
-  assert.equal(response.status, 201, await response.text());
+  async function uploadSession(sessionId) {
+    const manifest = { ...fixture.manifest, sessionId, keyframes: [] };
+    const zip = new JSZip();
+    zip.file('manifest.json', JSON.stringify(manifest));
+    const response = await fetch(`http://${address}/v1/sessions`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer smoke-ingest', 'Content-Type': 'application/zip' },
+      body: await zip.generateAsync({ type: 'nodebuffer' }),
+    });
+    assert.equal(response.status, 201, await response.text());
+  }
+  await uploadSession('jira-browser-smoke');
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await page.locator('.session[data-id="jira-browser-smoke"]').click();
   await page.getByText('Jira recipe: draft', { exact: true }).waitFor();
@@ -187,6 +196,22 @@ try {
   await page.getByRole('link', { name: 'Open TEAM-1 in Jira', exact: true }).waitFor();
   assert.equal(aiCalls, 1);
   assert.equal(issues.length, 1);
+  await openRecipes();
+  await page.getByLabel('After drafting').selectOption('automatic');
+  assert.equal(await page.getByLabel('Jira API token').inputValue(), '');
+  await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
+  await page
+    .getByText('New sessions will draft and publish automatically.', { exact: false })
+    .waitFor();
+  assert.equal(await page.getByLabel('After drafting').inputValue(), 'automatic');
+  await uploadSession('jira-auto-smoke');
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.locator('.session[data-id="jira-auto-smoke"]').click();
+  await page.getByText('Jira recipe: published', { exact: true }).waitFor();
+  await page.getByRole('link', { name: 'Open TEAM-2 in Jira', exact: true }).waitFor();
+  assert.equal(aiCalls, 2);
+  assert.equal(issues.length, 2);
+  assert.equal(issues[1].fields.summary, 'Captured usability defect');
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []);

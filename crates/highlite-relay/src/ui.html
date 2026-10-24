@@ -629,13 +629,13 @@
         <h2 id="recipes-title">Jira issue recipe</h2>
         <p class="hint">
           Analyze compiled sessions with your custom prompt and the relay's default AI provider.
-          Automatically create drafts, then review and explicitly publish to Jira Cloud.
+          Review and publish each draft, or opt into automatic publication.
         </p>
         <p class="hint">
           Enabling automatic drafting sends new sessions' summary, structured bundle, and capture
           analysis to your AI provider. Images are opt-in; raw audio and Jira credentials are never
-          sent to the model. Jira receives only the approved issue, static fields, and session
-          identity.
+          sent to the model. Jira receives only the generated or reviewed issue, static fields, and
+          session identity.
         </p>
         <p id="recipe-config-disabled" class="hint" hidden>
           Recipe configuration requires a loopback-bound relay.
@@ -695,6 +695,18 @@
             ><input id="recipe-auto" type="checkbox" checked /> Automatically draft new
             sessions</label
           >
+          <label
+            >After drafting
+            <select id="recipe-publish-mode">
+              <option value="review">Review first (recommended)</option>
+              <option value="automatic">Publish automatically to Jira</option>
+            </select>
+          </label>
+          <p id="recipe-auto-publish-warning" class="hint wide-field" hidden>
+            Automatic publishing creates a Jira issue after every successful draft, without review.
+            Only enable this after validating the prompt and destination; it applies to manual
+            regeneration too.
+          </p>
           <label class="provider-options"
             ><input id="recipe-images" type="checkbox" /> Send contact sheet to AI (may contain
             sensitive pixels; requires image-capable model)</label
@@ -801,6 +813,7 @@
         providersEnabled: false,
         editingProvider: null,
         recipeRun: null,
+        recipeSettings: null,
         recipeDirty: false,
         recipeTimer: null,
         selected: null,
@@ -855,7 +868,9 @@
         $('recipe-config-message').textContent = '';
         stopRecipePolling();
         state.recipeRun = null;
+        state.recipeSettings = null;
         state.recipeDirty = false;
+        $('recipe-auto-publish-warning').hidden = true;
         $('recipe-review').reset();
         $('recipe-review').hidden = true;
         state.providers = [];
@@ -1186,26 +1201,44 @@
       }
 
       async function loadRecipeConfig() {
-        const body = await api('/v1/recipes/jira-issue');
-        $('recipe-config-disabled').hidden = body.managementEnabled;
-        $('recipe-config-form').hidden = !body.managementEnabled;
-        const settings = body.recipe.settings;
-        $('jira-token').value = '';
-        $('jira-token').required = !body.recipe.hasApiToken;
-        $('jira-token').placeholder = body.recipe.hasApiToken
-          ? 'Leave blank to keep the saved token for this account'
-          : 'Jira Cloud API token';
-        if (!settings) return;
-        $('jira-site').value = settings.jira.siteUrl;
-        $('jira-email').value = settings.jira.email;
-        $('jira-project').value = settings.jira.projectKey;
-        $('jira-issue-type').value = settings.jira.issueTypeId;
-        $('jira-extra-fields').value = JSON.stringify(settings.jira.extraFields || {}, null, 2);
-        $('recipe-prompt').value = settings.prompt;
-        $('recipe-enabled').checked = settings.enabled;
-        $('recipe-auto').checked = settings.autoDraft;
-        $('recipe-images').checked = settings.includeImages;
+        const form = $('recipe-config-form');
+        form.inert = true;
+        try {
+          const body = await api('/v1/recipes/jira-issue');
+          $('recipe-config-disabled').hidden = body.managementEnabled;
+          form.hidden = !body.managementEnabled;
+          const settings = body.recipe.settings;
+          state.recipeSettings = settings;
+          $('jira-token').value = '';
+          $('jira-token').required = !body.recipe.hasApiToken;
+          $('jira-token').placeholder = body.recipe.hasApiToken
+            ? 'Leave blank to keep the saved token for this account'
+            : 'Jira Cloud API token';
+          if (!settings) {
+            updatePublishMode();
+            return;
+          }
+          $('jira-site').value = settings.jira.siteUrl;
+          $('jira-email').value = settings.jira.email;
+          $('jira-project').value = settings.jira.projectKey;
+          $('jira-issue-type').value = settings.jira.issueTypeId;
+          $('jira-extra-fields').value = JSON.stringify(settings.jira.extraFields || {}, null, 2);
+          $('recipe-prompt').value = settings.prompt;
+          $('recipe-enabled').checked = settings.enabled;
+          $('recipe-auto').checked = settings.autoDraft;
+          $('recipe-publish-mode').value = settings.publishMode || 'review';
+          $('recipe-images').checked = settings.includeImages;
+          updatePublishMode();
+        } finally {
+          form.inert = false;
+        }
       }
+
+      function updatePublishMode() {
+        $('recipe-auto-publish-warning').hidden = $('recipe-publish-mode').value !== 'automatic';
+      }
+
+      $('recipe-publish-mode').addEventListener('change', updatePublishMode);
 
       $('recipes-toggle').addEventListener('click', () => {
         const opening = $('recipes-panel').hidden;
@@ -1230,6 +1263,7 @@
           settings: {
             enabled: $('recipe-enabled').checked,
             autoDraft: $('recipe-auto').checked,
+            publishMode: $('recipe-publish-mode').value,
             includeImages: $('recipe-images').checked,
             prompt: $('recipe-prompt').value,
             jira: {
@@ -1252,7 +1286,9 @@
           });
           await loadRecipeConfig();
           $('recipe-config-message').textContent =
-            'Recipe saved. Jira credentials have not been verified. Automatic drafting applies to new sessions only; publishing always requires review.';
+            $('recipe-publish-mode').value === 'automatic'
+              ? 'Recipe saved. Jira credentials have not been verified. New sessions will draft and publish automatically. Automatic drafting applies to new sessions only.'
+              : 'Recipe saved. Jira credentials have not been verified. Automatic drafting applies to new sessions only; publishing requires review.';
         } catch (error) {
           toast(error.message);
         } finally {
@@ -1271,15 +1307,22 @@
           ? `Jira recipe: ${run.status}`
           : 'No Jira draft yet. Configure the recipe under Recipes, then generate a draft here or automatically for new sessions.';
         $('recipe-context').textContent = run
-          ? `${run.settings.jira.siteUrl} · ${run.settings.jira.projectKey} · issue type ${run.settings.jira.issueTypeId}${run.provider ? ` · AI: ${run.provider.id} / ${run.provider.model}` : ''}`
+          ? `${run.settings.jira.siteUrl} · ${run.settings.jira.projectKey} · issue type ${run.settings.jira.issueTypeId} · ${run.settings.publishMode === 'automatic' ? 'automatic publication' : 'review before publication'}${run.provider ? ` · AI: ${run.provider.id} / ${run.provider.model}` : ''}`
           : '';
         $('recipe-error').hidden = !run?.error;
         $('recipe-error').textContent = run?.error || '';
         $('recipe-generate').disabled =
           state.selected?.status !== 'ready' ||
           Boolean(run && !['draft', 'failed'].includes(run.status));
-        $('recipe-generate').textContent =
-          run?.status === 'draft' ? 'Regenerate Jira draft' : 'Generate Jira draft';
+        const automaticPublish =
+          (run?.settings || state.recipeSettings)?.publishMode === 'automatic';
+        $('recipe-generate').textContent = automaticPublish
+          ? run?.status === 'draft'
+            ? 'Regenerate & publish Jira issue'
+            : 'Generate & publish Jira issue'
+          : run?.status === 'draft'
+            ? 'Regenerate Jira draft'
+            : 'Generate Jira draft';
         $('recipe-review').hidden = !run?.draft;
         const editable = run?.status === 'draft';
         $('recipe-summary').value = run?.draft?.summary || '';
@@ -1323,9 +1366,17 @@
       $('recipe-generate').addEventListener('click', async () => {
         const sessionId = state.selected?.sessionId;
         if (!sessionId) return;
+        const automaticPublish =
+          (state.recipeRun?.settings || state.recipeSettings)?.publishMode === 'automatic';
+        const destination = state.recipeSettings?.jira;
+        const replaceDraft = Boolean(state.recipeRun?.draft);
         if (
-          state.recipeRun?.draft &&
-          !confirm('Replace the current draft and its edits using the saved recipe settings?')
+          automaticPublish
+            ? !confirm(
+                `${replaceDraft ? 'Replace the current draft and publish' : 'Generate and publish'} a Jira issue automatically${destination ? ` in ${destination.projectKey} at ${destination.siteUrl}` : ''}?\n\nAutomatic publication cannot be undone.`,
+              )
+            : replaceDraft &&
+              !confirm('Replace the current draft and its edits using the saved recipe settings?')
         )
           return;
         $('recipe-generate').disabled = true;

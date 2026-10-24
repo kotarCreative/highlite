@@ -8,7 +8,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
 
 use crate::jira::IssueDraft;
-use crate::recipes::{self, ConfigureRecipe, RecipeStore, RunStore, blocking};
+use crate::recipes::{self, ConfigureRecipe, PublishTrigger, RecipeStore, RunStore, blocking};
 use crate::{
     AppState, SessionStatus, bind_is_loopback, checked_session_id, error_response, read_metadata,
 };
@@ -167,7 +167,7 @@ async fn publish(
         Ok(input) => input,
         Err((status, message)) => return error_response(status, message),
     };
-    match recipes::publish(state, id, input.revision).await {
+    match recipes::publish(state, id, input.revision, PublishTrigger::Manual).await {
         Ok(run) => (StatusCode::ACCEPTED, Json(run)).into_response(),
         Err(error) => error_response(StatusCode::CONFLICT, error),
     }

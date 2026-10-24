@@ -183,11 +183,11 @@ LLM requests. See
 [provider setup and storage](crates/highlite-relay/README.md#ai-provider-connections).
 
 Open **Recipes** to configure the first built-in flow: a custom prompt analyzes new
-compiled sessions with the default AI provider and automatically prepares a Jira Cloud
-issue draft. Review and edit it in the session UI, then explicitly publish to Jira.
-Images are opt-in; Jira credentials are stored in the same private central config
-folder. See [the Jira recipe guide](docs/jira-recipe.md) for setup, data sharing, and
-failure handling.
+compiled sessions with the default AI provider and prepares a Jira Cloud issue. Choose
+**Review first** to edit and approve each draft, or **Publish automatically** to create
+issues without a review step. Images are opt-in; Jira credentials are stored in the
+same private central config folder. See [the Jira recipe guide](docs/jira-recipe.md)
+for setup, data sharing, and failure handling.
 
 Run `pnpm dev` and open the demo to try the analytics walkthrough. Its local preview shows the exact manifest and summary assembled by the SDK; it does not upload captures.
 

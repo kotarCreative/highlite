@@ -99,8 +99,8 @@ async fn mock_remote() -> (String, Arc<MockRemote>, tokio::task::JoinHandle<()>)
     (format!("http://{address}"), state, task)
 }
 
-fn settings(base: &str, automatic: bool) -> Value {
-    json!({"enabled": true, "autoDraft": automatic, "includeImages": false, "prompt": "Custom team guidance: focus on reproduction steps", "jira": {
+fn settings(base: &str, automatic: bool, publish_mode: &str) -> Value {
+    json!({"enabled": true, "autoDraft": automatic, "publishMode": publish_mode, "includeImages": false, "prompt": "Custom team guidance: focus on reproduction steps", "jira": {
         "siteUrl": base, "email": "person@example.com", "projectKey": "TEAM", "issueTypeId": "10001", "extraFields": {"labels": ["highlite"]},
     }})
 }
@@ -179,7 +179,7 @@ async fn automatically_drafts_then_publishes_only_the_reviewed_revision_once() {
     let app = crate::build_app(config.clone()).unwrap();
     assert_eq!(upload(&app, "before-enabled").await, StatusCode::CREATED);
     assert_eq!(remote.ai_calls.load(Ordering::SeqCst), 0);
-    let input = json!({"settings": settings(&base, true), "apiToken": "jira-secret"});
+    let input = json!({"settings": settings(&base, true, "review"), "apiToken": "jira-secret"});
     for token in ["ingest-secret", "wrong"] {
         assert_eq!(
             call(
@@ -271,6 +271,59 @@ async fn automatically_drafts_then_publishes_only_the_reviewed_revision_once() {
 }
 
 #[tokio::test]
+async fn automatic_mode_publishes_without_review_and_keeps_rejections_actionable() {
+    let temp = TempDir::new().unwrap();
+    let config = test_config(&temp);
+    let (base, remote, task) = mock_remote().await;
+    provider(&config.config_dir, &base);
+    let app = crate::build_app(config).unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/recipes/jira-issue",
+            json!({"settings": settings(&base, true, "automatic"), "apiToken": "jira-secret"}),
+            "read-secret",
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(upload(&app, "auto-publish").await, StatusCode::CREATED);
+    let path = "/v1/sessions/auto-publish/recipes/jira-issue";
+    let published = wait_for(&app, path, "published").await;
+    assert_eq!(published["issueKey"], "TEAM-123");
+    assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(published["draft"]["summary"], "Captured defect");
+
+    remote.jira_status.store(400, Ordering::SeqCst);
+    assert_eq!(upload(&app, "auto-rejected").await, StatusCode::CREATED);
+    let rejected_path = "/v1/sessions/auto-rejected/recipes/jira-issue";
+    let rejected = wait_for(&app, rejected_path, "draft").await;
+    assert_eq!(rejected["draft"]["summary"], "Captured defect");
+    assert!(rejected["error"].as_str().unwrap().contains("HTTP 400"));
+    assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 2);
+
+    remote.jira_status.store(201, Ordering::SeqCst);
+    let approval = json!({"revision": rejected["revision"]});
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("{rejected_path}/publish"),
+            approval,
+            "read-secret",
+        )
+        .await
+        .0,
+        StatusCode::ACCEPTED
+    );
+    wait_for(&app, rejected_path, "published").await;
+    assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 3);
+    task.abort();
+}
+
+#[tokio::test]
 async fn rejects_invalid_ai_and_does_not_retry_ambiguous_jira_publication() {
     let temp = TempDir::new().unwrap();
     let config = test_config(&temp);
@@ -282,7 +335,7 @@ async fn rejects_invalid_ai_and_does_not_retry_ambiguous_jira_publication() {
             &app,
             Method::POST,
             "/v1/recipes/jira-issue",
-            json!({"settings": settings(&base, true), "apiToken": "jira-secret"}),
+            json!({"settings": settings(&base, true, "review"), "apiToken": "jira-secret"}),
             "read-secret"
         )
         .await

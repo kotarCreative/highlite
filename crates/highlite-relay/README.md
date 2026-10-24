@@ -198,12 +198,12 @@ included in capture bundles, provider HTTP responses, or provider CLI output.
 ## Jira issue recipe
 
 The built-in `jira-issue` recipe analyzes compiled sessions with a custom prompt and
-the default AI provider, automatically drafts an issue when enabled, and lets you
-review/edit the result before explicitly publishing to Jira Cloud. Configure it from
-**Recipes** in the local UI; no shell pipeline is required. It is disabled by default.
-Jira credentials live in the private central config folder, separate from captured
-sessions and run output. Images are opt-in, and ambiguous publication failures are
-never automatically retried.
+the default AI provider and automatically drafts an issue when enabled. Choose
+**Review first** to edit and approve the draft, or **Publish automatically** to create
+the Jira Cloud issue without review. Configure it from **Recipes** in the local UI; no
+shell pipeline is required. It is disabled by default. Jira credentials live in the
+private central config folder, separate from captured sessions and run output. Images
+are opt-in, and ambiguous publication failures are never automatically retried.
 
 See [the Jira recipe guide](../../docs/jira-recipe.md) for setup, HTTP endpoints,
 credentials, supported models, data sharing, and recovery behavior.
