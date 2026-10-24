@@ -398,6 +398,7 @@
         gap: 4px;
       }
       .provider-form input:not([type='checkbox']),
+      .provider-form textarea,
       .provider-form select {
         width: 100%;
         padding: 8px 10px;
@@ -425,6 +426,33 @@
       .provider-row .hint {
         margin: 2px 0 0;
         overflow-wrap: anywhere;
+      }
+      .wide-field {
+        grid-column: 1 / -1;
+      }
+      .recipe-review {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      .recipe-review label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .recipe-review input,
+      .recipe-review textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font: inherit;
+        resize: vertical;
+      }
+      .topbar .actions,
+      .recipe-review .actions {
+        flex-wrap: wrap;
       }
       .run-history {
         display: flex;
@@ -483,6 +511,15 @@
         <p id="status-line">Connecting…</p>
       </div>
       <div class="actions">
+        <button
+          id="recipes-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="recipes-panel"
+          hidden
+        >
+          Recipes
+        </button>
         <button
           id="providers-toggle"
           type="button"
@@ -583,6 +620,92 @@
         <p id="provider-message" class="hint" role="status"></p>
       </section>
 
+      <section
+        id="recipes-panel"
+        class="panel providers-panel"
+        aria-labelledby="recipes-title"
+        hidden
+      >
+        <h2 id="recipes-title">Jira issue recipe</h2>
+        <p class="hint">
+          Analyze compiled sessions with your custom prompt and the relay's default AI provider.
+          Automatically create drafts, then review and explicitly publish to Jira Cloud.
+        </p>
+        <p class="hint">
+          Enabling automatic drafting sends new sessions' summary, structured bundle, and capture
+          analysis to your AI provider. Images are opt-in; raw audio and Jira credentials are never
+          sent to the model. Jira receives only the approved issue, static fields, and session
+          identity.
+        </p>
+        <p id="recipe-config-disabled" class="hint" hidden>
+          Recipe configuration requires a loopback-bound relay.
+        </p>
+        <form id="recipe-config-form" class="provider-form" autocomplete="off">
+          <label
+            >Jira site URL<input
+              id="jira-site"
+              type="url"
+              required
+              placeholder="https://team.atlassian.net"
+          /></label>
+          <label>Jira account email<input id="jira-email" type="email" required /></label>
+          <label
+            >Jira API token<input
+              id="jira-token"
+              type="password"
+              autocomplete="new-password"
+              spellcheck="false"
+              maxlength="16384"
+          /></label>
+          <label
+            >Project key<input
+              id="jira-project"
+              required
+              pattern="[A-Z0-9_]{1,64}"
+              placeholder="TEAM"
+          /></label>
+          <label
+            >Issue type ID<input
+              id="jira-issue-type"
+              required
+              pattern="[0-9]{1,32}"
+              placeholder="Numeric ID from Jira project settings"
+          /></label>
+          <label class="wide-field"
+            >Custom analysis prompt<textarea
+              id="recipe-prompt"
+              required
+              rows="5"
+              maxlength="16384"
+              placeholder="Focus on user-facing defects. Describe expected behavior only when supported by the narration. Include reproduction steps and evidence timestamps."
+            ></textarea>
+          </label>
+          <label class="wide-field"
+            >Extra Jira fields (optional JSON object)<textarea
+              id="jira-extra-fields"
+              rows="3"
+              spellcheck="false"
+              placeholder='{"labels": ["highlite"]}'
+            ></textarea>
+          </label>
+          <label class="provider-options"
+            ><input id="recipe-enabled" type="checkbox" /> Enable this recipe</label
+          >
+          <label class="provider-options"
+            ><input id="recipe-auto" type="checkbox" checked /> Automatically draft new
+            sessions</label
+          >
+          <label class="provider-options"
+            ><input id="recipe-images" type="checkbox" /> Send contact sheet to AI (may contain
+            sensitive pixels; requires image-capable model)</label
+          >
+          <div class="actions">
+            <button id="recipe-config-save" class="primary" type="submit">Save recipe</button>
+          </div>
+        </form>
+        <p id="recipe-config-message" class="hint" role="status"></p>
+      </section>
+
       <div id="workspace" class="workspace" hidden>
         <aside class="panel">
           <div class="panel-head"><span>Sessions</span><span id="session-count"></span></div>
@@ -626,6 +749,23 @@
             <h3>Summary</h3>
             <pre id="detail-summary" class="summary"></pre>
 
+            <h3>Jira issue</h3>
+            <p id="recipe-status" class="hint"></p>
+            <p id="recipe-context" class="hint"></p>
+            <p id="recipe-error" class="error" role="alert" hidden></p>
+            <button id="recipe-generate" type="button">Generate Jira draft</button>
+            <form id="recipe-review" class="recipe-review" hidden>
+              <label>Issue summary<input id="recipe-summary" required maxlength="255" /></label>
+              <label
+                >Issue description<textarea id="recipe-description" required rows="12"></textarea>
+              </label>
+              <div class="actions">
+                <button id="recipe-draft-save" type="button">Save draft changes</button>
+                <button id="recipe-publish" class="primary" type="button">Publish to Jira</button>
+              </div>
+            </form>
+            <p><a id="recipe-issue-link" target="_blank" rel="noreferrer" hidden></a></p>
+
             <h3>Pipelines</h3>
             <p id="pipeline-hint" class="hint"></p>
             <div id="pipeline-buttons" class="pipeline-buttons"></div>
@@ -660,6 +800,9 @@
         defaultProvider: null,
         providersEnabled: false,
         editingProvider: null,
+        recipeRun: null,
+        recipeDirty: false,
+        recipeTimer: null,
         selected: null,
         pollTimer: null,
       };
@@ -705,6 +848,16 @@
         $('providers-toggle').hidden = true;
         $('providers-toggle').setAttribute('aria-expanded', 'false');
         $('providers-panel').hidden = true;
+        $('recipes-toggle').hidden = true;
+        $('recipes-toggle').setAttribute('aria-expanded', 'false');
+        $('recipes-panel').hidden = true;
+        $('recipe-config-form').reset();
+        $('recipe-config-message').textContent = '';
+        stopRecipePolling();
+        state.recipeRun = null;
+        state.recipeDirty = false;
+        $('recipe-review').reset();
+        $('recipe-review').hidden = true;
         state.providers = [];
         resetProviderForm();
         $('providers-list').replaceChildren();
@@ -864,6 +1017,7 @@
         $('detail-error').textContent = session.error || '';
         $('detail-summary').textContent = session.summary || 'No summary was produced.';
         renderPipelines(session);
+        if (!state.recipeDirty) void loadRecipeRun(session.sessionId);
         void loadRuns(session.sessionId);
       }
 
@@ -1011,10 +1165,222 @@
       function selectSession(session) {
         state.selected = session;
         stopPolling();
+        stopRecipePolling();
+        state.recipeRun = null;
+        state.recipeDirty = false;
+        $('recipe-review').reset();
+        $('recipe-review').hidden = true;
+        $('recipe-status').textContent = 'Loading Jira draft…';
+        $('recipe-context').textContent = '';
+        $('recipe-error').hidden = true;
+        $('recipe-issue-link').hidden = true;
+        $('recipe-generate').disabled = true;
         $('run-panel').hidden = true;
         renderList();
         renderDetail(session);
       }
+
+      function stopRecipePolling() {
+        clearTimeout(state.recipeTimer);
+        state.recipeTimer = null;
+      }
+
+      async function loadRecipeConfig() {
+        const body = await api('/v1/recipes/jira-issue');
+        $('recipe-config-disabled').hidden = body.managementEnabled;
+        $('recipe-config-form').hidden = !body.managementEnabled;
+        const settings = body.recipe.settings;
+        $('jira-token').value = '';
+        $('jira-token').required = !body.recipe.hasApiToken;
+        $('jira-token').placeholder = body.recipe.hasApiToken
+          ? 'Leave blank to keep the saved token for this account'
+          : 'Jira Cloud API token';
+        if (!settings) return;
+        $('jira-site').value = settings.jira.siteUrl;
+        $('jira-email').value = settings.jira.email;
+        $('jira-project').value = settings.jira.projectKey;
+        $('jira-issue-type').value = settings.jira.issueTypeId;
+        $('jira-extra-fields').value = JSON.stringify(settings.jira.extraFields || {}, null, 2);
+        $('recipe-prompt').value = settings.prompt;
+        $('recipe-enabled').checked = settings.enabled;
+        $('recipe-auto').checked = settings.autoDraft;
+        $('recipe-images').checked = settings.includeImages;
+      }
+
+      $('recipes-toggle').addEventListener('click', () => {
+        const opening = $('recipes-panel').hidden;
+        $('recipes-panel').hidden = !opening;
+        $('recipes-toggle').setAttribute('aria-expanded', String(opening));
+        if (opening) void loadRecipeConfig().catch((error) => toast(error.message));
+        else $('jira-token').value = '';
+      });
+
+      $('recipe-config-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        let extraFields;
+        try {
+          extraFields = JSON.parse($('jira-extra-fields').value.trim() || '{}');
+          if (!extraFields || Array.isArray(extraFields) || typeof extraFields !== 'object')
+            throw new Error();
+        } catch {
+          toast('Extra Jira fields must be a JSON object.');
+          return;
+        }
+        const input = {
+          settings: {
+            enabled: $('recipe-enabled').checked,
+            autoDraft: $('recipe-auto').checked,
+            includeImages: $('recipe-images').checked,
+            prompt: $('recipe-prompt').value,
+            jira: {
+              siteUrl: $('jira-site').value.trim(),
+              email: $('jira-email').value.trim(),
+              projectKey: $('jira-project').value.trim(),
+              issueTypeId: $('jira-issue-type').value.trim(),
+              extraFields,
+            },
+          },
+        };
+        if ($('jira-token').value) input.apiToken = $('jira-token').value;
+        $('jira-token').value = '';
+        $('recipe-config-save').disabled = true;
+        try {
+          await api('/v1/recipes/jira-issue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(input),
+          });
+          await loadRecipeConfig();
+          $('recipe-config-message').textContent =
+            'Recipe saved. Jira credentials have not been verified. Automatic drafting applies to new sessions only; publishing always requires review.';
+        } catch (error) {
+          toast(error.message);
+        } finally {
+          $('recipe-config-save').disabled = false;
+        }
+      });
+
+      function recipePath(sessionId) {
+        return `/v1/sessions/${encodeURIComponent(sessionId)}/recipes/jira-issue`;
+      }
+
+      function renderRecipeRun(run) {
+        state.recipeRun = run;
+        state.recipeDirty = false;
+        $('recipe-status').textContent = run
+          ? `Jira recipe: ${run.status}`
+          : 'No Jira draft yet. Configure the recipe under Recipes, then generate a draft here or automatically for new sessions.';
+        $('recipe-context').textContent = run
+          ? `${run.settings.jira.siteUrl} · ${run.settings.jira.projectKey} · issue type ${run.settings.jira.issueTypeId}${run.provider ? ` · AI: ${run.provider.id} / ${run.provider.model}` : ''}`
+          : '';
+        $('recipe-error').hidden = !run?.error;
+        $('recipe-error').textContent = run?.error || '';
+        $('recipe-generate').disabled =
+          state.selected?.status !== 'ready' ||
+          Boolean(run && !['draft', 'failed'].includes(run.status));
+        $('recipe-generate').textContent =
+          run?.status === 'draft' ? 'Regenerate Jira draft' : 'Generate Jira draft';
+        $('recipe-review').hidden = !run?.draft;
+        const editable = run?.status === 'draft';
+        $('recipe-summary').value = run?.draft?.summary || '';
+        $('recipe-description').value = run?.draft?.description || '';
+        $('recipe-summary').readOnly = !editable;
+        $('recipe-description').readOnly = !editable;
+        $('recipe-draft-save').disabled = true;
+        $('recipe-publish').disabled = !editable;
+        $('recipe-issue-link').hidden = !run?.issueUrl;
+        if (run?.issueUrl) {
+          $('recipe-issue-link').href = run.issueUrl;
+          $('recipe-issue-link').textContent = `Open ${run.issueKey} in Jira`;
+        }
+      }
+
+      async function loadRecipeRun(sessionId) {
+        stopRecipePolling();
+        try {
+          const body = await api(recipePath(sessionId));
+          if (state.selected?.sessionId !== sessionId || state.recipeDirty) return;
+          renderRecipeRun(body.run);
+          if (body.run && ['queued', 'analyzing', 'publishing'].includes(body.run.status)) {
+            state.recipeTimer = setTimeout(() => void loadRecipeRun(sessionId), 1000);
+          }
+        } catch (error) {
+          if (state.selected?.sessionId === sessionId) {
+            $('recipe-status').textContent = error.message;
+            $('recipe-generate').disabled = false;
+          }
+        }
+      }
+
+      for (const field of ['recipe-summary', 'recipe-description']) {
+        $(field).addEventListener('input', () => {
+          state.recipeDirty = true;
+          $('recipe-draft-save').disabled = false;
+          $('recipe-publish').disabled = true;
+        });
+      }
+      $('recipe-review').addEventListener('submit', (event) => event.preventDefault());
+      $('recipe-generate').addEventListener('click', async () => {
+        const sessionId = state.selected?.sessionId;
+        if (!sessionId) return;
+        if (
+          state.recipeRun?.draft &&
+          !confirm('Replace the current draft and its edits using the saved recipe settings?')
+        )
+          return;
+        $('recipe-generate').disabled = true;
+        try {
+          await api(recipePath(sessionId), { method: 'POST' });
+          state.recipeDirty = false;
+          await loadRecipeRun(sessionId);
+        } catch (error) {
+          toast(error.message);
+          $('recipe-generate').disabled = false;
+        }
+      });
+      $('recipe-draft-save').addEventListener('click', async () => {
+        const run = state.recipeRun;
+        if (!run || !$('recipe-review').reportValidity()) return;
+        const input = {
+          revision: run.revision,
+          draft: { summary: $('recipe-summary').value, description: $('recipe-description').value },
+        };
+        $('recipe-draft-save').disabled = true;
+        try {
+          const saved = await api(`${recipePath(run.sessionId)}/draft`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(input),
+          });
+          if (state.selected?.sessionId === run.sessionId) renderRecipeRun(saved);
+        } catch (error) {
+          toast(error.message);
+          $('recipe-draft-save').disabled = false;
+        }
+      });
+      $('recipe-publish').addEventListener('click', async () => {
+        const run = state.recipeRun;
+        if (
+          !run ||
+          state.recipeDirty ||
+          !confirm(
+            `Create an issue in Jira project ${run.settings.jira.projectKey} at ${run.settings.jira.siteUrl}?\n\n${run.draft.summary}`,
+          )
+        )
+          return;
+        $('recipe-publish').disabled = true;
+        try {
+          await api(`${recipePath(run.sessionId)}/publish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ revision: run.revision }),
+          });
+          await loadRecipeRun(run.sessionId);
+        } catch (error) {
+          toast(error.message);
+          if (!state.recipeDirty) $('recipe-publish').disabled = false;
+        }
+      });
 
       function updateProviderKind() {
         const compatible = $('provider-kind').value === 'openai-compatible';
@@ -1194,6 +1560,7 @@
           workspaceEl.hidden = false;
           $('signout').hidden = false;
           $('providers-toggle').hidden = false;
+          $('recipes-toggle').hidden = false;
           if (!$('providers-panel').hidden) await loadProviders();
 
           if (state.selected) {

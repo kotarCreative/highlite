@@ -45,7 +45,14 @@ use tokio::sync::Semaphore;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+mod ai;
+mod jira;
+mod private_config;
 pub mod providers;
+mod recipe_http;
+#[cfg(test)]
+mod recipe_tests;
+mod recipes;
 
 const MANIFEST_SCHEMA_VERSION: &str = "0.1.0";
 const MAX_PATH_COMPONENTS: usize = 16;
@@ -337,6 +344,7 @@ impl Drop for TempCapture {
 pub fn build_app(config: RelayConfig) -> Result<Router, String> {
     config.validate()?;
     create_data_dirs(&config.data_dir)?;
+    recipes::RunStore::new(&config.data_dir).recover()?;
     let pipelines = load_pipelines(&config)?;
     if config.allow_pipelines {
         eprintln!(
@@ -353,6 +361,7 @@ pub fn build_app(config: RelayConfig) -> Result<Router, String> {
     };
 
     let api = Router::new()
+        .merge(recipe_http::routes())
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers/{id}", post(connect_provider))
         .route("/v1/providers/{id}/default", post(default_provider))
@@ -715,6 +724,11 @@ async fn ingest_session(State(state): State<AppState>, request: Request) -> Resp
                 metadata.session_id, metadata.bytes
             );
             spawn_session_webhook(state.config.clone(), &metadata);
+            if let Err(error) =
+                recipes::start(state.clone(), metadata.session_id.clone(), true).await
+            {
+                eprintln!("could not queue automatic Jira draft: {error}");
+            }
             let location = metadata.status_url.clone();
             let mut response = (StatusCode::CREATED, Json(metadata)).into_response();
             if let Ok(value) = HeaderValue::from_str(&location) {
@@ -2264,7 +2278,7 @@ mod tests {
         .expect("test manifest should deserialize")
     }
 
-    fn capture_zip(session_id: &str) -> Vec<u8> {
+    pub(super) fn capture_zip(session_id: &str) -> Vec<u8> {
         let manifest = minimal_manifest(session_id);
         let mut bytes = Cursor::new(Vec::new());
         {
@@ -2283,7 +2297,7 @@ mod tests {
         bytes.into_inner()
     }
 
-    fn test_config(temp: &TempDir) -> RelayConfig {
+    pub(super) fn test_config(temp: &TempDir) -> RelayConfig {
         RelayConfig {
             bind: "127.0.0.1:0".to_owned(),
             data_dir: temp.path().to_path_buf(),
@@ -2315,7 +2329,7 @@ mod tests {
         (app, config)
     }
 
-    fn request(method: Method, uri: &str, body: Body) -> Request<Body> {
+    pub(super) fn request(method: Method, uri: &str, body: Body) -> Request<Body> {
         Request::builder()
             .method(method)
             .uri(uri)

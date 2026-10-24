@@ -88,6 +88,11 @@ Endpoints:
   POST /v1/providers/{id}        save a provider connection
   POST /v1/providers/{id}/default
   POST /v1/providers/{id}/disconnect
+  GET  /v1/recipes/jira-issue     Jira recipe settings (POST to configure locally)
+  GET  /v1/sessions/{id}/recipes/jira-issue
+  POST /v1/sessions/{id}/recipes/jira-issue
+  POST /v1/sessions/{id}/recipes/jira-issue/draft
+  POST /v1/sessions/{id}/recipes/jira-issue/publish
   GET  /healthz
   GET  /                         local sessions UI with --ui
 

@@ -19,6 +19,7 @@ Requires Node.js 22 or newer, pnpm 12, and a Rust toolchain with Cargo. Install 
 - `pnpm test:e2e` — build and run the browser smoke test, then the SDK → Rust compiler e2e (`CHROMIUM_PATH` can override `/usr/bin/chromium`)
 - `pnpm test:compiler:e2e` — build the SDK and compiler, then compile a real browser capture through the Rust CLI
 - `pnpm test:providers` — exercise shared provider configuration through the CLI and relay UI in Chromium
+- `pnpm test:recipes` — exercise automatic Jira drafting, review, and publication against local fake AI/Jira endpoints
 - `pnpm test:parakeet` — opt-in: run a real Parakeet transcription through `bundle` (see below)
 
 The compiler CLI reads a `CompileInput` JSON object on stdin:
@@ -177,8 +178,16 @@ local relay UI. OpenAI, Anthropic, and OpenAI-compatible/local endpoints are sup
 Credentials live in the OS user config folder, separate from sessions; use
 `HIGHLITE_CONFIG_DIR` or `--config-dir` to override it. Connections can be listed,
 updated, removed, and selected as the default without a relay restart. This currently
-stores configuration only; it does not verify credentials or run LLM requests. See
+does not verify credentials at setup time. The Jira recipe uses these connections for
+LLM requests. See
 [provider setup and storage](crates/highlite-relay/README.md#ai-provider-connections).
+
+Open **Recipes** to configure the first built-in flow: a custom prompt analyzes new
+compiled sessions with the default AI provider and automatically prepares a Jira Cloud
+issue draft. Review and edit it in the session UI, then explicitly publish to Jira.
+Images are opt-in; Jira credentials are stored in the same private central config
+folder. See [the Jira recipe guide](docs/jira-recipe.md) for setup, data sharing, and
+failure handling.
 
 Run `pnpm dev` and open the demo to try the analytics walkthrough. Its local preview shows the exact manifest and summary assembled by the SDK; it does not upload captures.
 

@@ -1,13 +1,8 @@
 //! Shared, private provider configuration for the relay and its CLI.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-
-const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 
 /// Resolve the central configuration directory independently of session storage.
 pub fn config_dir(override_dir: Option<PathBuf>) -> Result<PathBuf, String> {
@@ -76,7 +71,7 @@ pub struct ConnectProvider {
 }
 
 /// Public metadata: never includes credentials, even partially masked ones.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderInfo {
     pub id: String,
@@ -91,6 +86,15 @@ pub struct ProviderInfo {
 pub struct ProviderList {
     pub default_provider: Option<String>,
     pub providers: Vec<ProviderInfo>,
+}
+
+/// Resolved credentials are internal only: never serialized or debug-printed.
+pub(crate) struct ResolvedProvider {
+    pub id: String,
+    pub kind: ProviderKind,
+    pub model: String,
+    pub base_url: String,
+    pub api_key: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -153,6 +157,27 @@ impl ProviderStore {
 
     pub fn list(&self) -> Result<ProviderList, String> {
         self.access(false, |config| Ok(config.metadata()))
+    }
+
+    pub(crate) fn resolve_default(&self) -> Result<ResolvedProvider, String> {
+        self.access(false, |config| {
+            let id = config
+                .default_provider
+                .as_ref()
+                .ok_or("configure a default AI provider first")?;
+            let provider = config
+                .providers
+                .iter()
+                .find(|provider| &provider.id == id)
+                .ok_or("default AI provider not found")?;
+            Ok(ResolvedProvider {
+                id: provider.id.clone(),
+                kind: provider.kind,
+                model: provider.model.clone(),
+                base_url: provider.base_url.clone(),
+                api_key: provider.api_key.clone(),
+            })
+        })
     }
 
     pub fn connect(&self, id: &str, input: ConnectProvider) -> Result<ProviderList, String> {
@@ -237,91 +262,46 @@ impl ProviderStore {
         write: bool,
         operation: impl FnOnce(&mut ProviderFile) -> Result<T, String>,
     ) -> Result<T, String> {
-        private_directory(&self.root)?;
-        let lock_path = self.root.join("providers.lock");
-        reject_symlink(&lock_path)?;
-        let lock = private_options()
-            .open(&lock_path)
-            .map_err(|_| "could not open provider config lock".to_owned())?;
-        ensure_private(&lock)?;
-        lock.lock_exclusive()
-            .map_err(|_| "could not lock provider config".to_owned())?;
-        let path = self.root.join("providers.json");
-        reject_symlink(&path)?;
-        let mut config = match File::open(&path) {
-            Ok(file) => {
-                ensure_private(&file)?;
-                if file
-                    .metadata()
-                    .map_err(|_| "could not inspect provider config")?
-                    .len()
-                    > MAX_CONFIG_BYTES
+        crate::private_config::access(
+            &self.root,
+            "providers",
+            write,
+            |config: &mut ProviderFile| {
+                if config.schema_version != 1 {
+                    return Err("unsupported provider config schema version".to_owned());
+                }
+                // Hand-edited files must satisfy the same contract as CLI/UI writes.
+                let mut ids = std::collections::HashSet::new();
+                for provider in &config.providers {
+                    if validate_id(&provider.id).is_err()
+                        || !ids.insert(provider.id.as_str())
+                        || provider.model.trim().is_empty()
+                        || provider.model.len() > 256
+                        || provider.model.chars().any(char::is_control)
+                        || normalize_base_url(provider.kind, Some(&provider.base_url)).is_err()
+                        || (provider.api_key.is_none()
+                            && provider.kind != ProviderKind::OpenaiCompatible)
+                        || provider.api_key.as_ref().is_some_and(|key| {
+                            key.trim().is_empty()
+                                || key.len() > 16 * 1024
+                                || key.chars().any(char::is_control)
+                        })
+                    {
+                        return Err(
+                            "invalid provider config; existing file was not modified".to_owned()
+                        );
+                    }
+                }
+                if config
+                    .default_provider
+                    .as_ref()
+                    .is_some_and(|id| !ids.contains(id.as_str()))
                 {
-                    return Err("provider config exceeds the size limit".to_owned());
+                    return Err("default provider does not exist in provider config".to_owned());
                 }
-                let mut bytes = Vec::new();
-                file.take(MAX_CONFIG_BYTES + 1)
-                    .read_to_end(&mut bytes)
-                    .map_err(|_| "could not read provider config".to_owned())?;
-                if bytes.len() as u64 > MAX_CONFIG_BYTES {
-                    return Err("provider config exceeds the size limit".to_owned());
-                }
-                // Do not include parser diagnostics: they can contain credential values.
-                serde_json::from_slice::<ProviderFile>(&bytes).map_err(|_| {
-                    "invalid provider config; existing file was not modified".to_owned()
-                })?
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => ProviderFile::default(),
-            Err(_) => return Err("could not read provider config".to_owned()),
-        };
-        if config.schema_version != 1 {
-            return Err("unsupported provider config schema version".to_owned());
-        }
-        // Hand-edited files must satisfy the same contract as CLI/UI writes.
-        let mut ids = std::collections::HashSet::new();
-        for provider in &config.providers {
-            if validate_id(&provider.id).is_err()
-                || !ids.insert(provider.id.as_str())
-                || provider.model.trim().is_empty()
-                || provider.model.len() > 256
-                || provider.model.chars().any(char::is_control)
-                || normalize_base_url(provider.kind, Some(&provider.base_url)).is_err()
-                || (provider.api_key.is_none() && provider.kind != ProviderKind::OpenaiCompatible)
-                || provider.api_key.as_ref().is_some_and(|key| {
-                    key.trim().is_empty()
-                        || key.len() > 16 * 1024
-                        || key.chars().any(char::is_control)
-                })
-            {
-                return Err("invalid provider config; existing file was not modified".to_owned());
-            }
-        }
-        if config
-            .default_provider
-            .as_ref()
-            .is_some_and(|id| !ids.contains(id.as_str()))
-        {
-            return Err("default provider does not exist in provider config".to_owned());
-        }
-        let result = operation(&mut config)?;
-        if write {
-            let bytes = serde_json::to_vec_pretty(&config)
-                .map_err(|_| "could not encode provider config".to_owned())?;
-            if bytes.len() as u64 > MAX_CONFIG_BYTES {
-                return Err("provider config exceeds the size limit".to_owned());
-            }
-            let mut temporary = tempfile::NamedTempFile::new_in(&self.root)
-                .map_err(|_| "could not create private provider config".to_owned())?;
-            ensure_private(temporary.as_file())?;
-            temporary
-                .write_all(&bytes)
-                .and_then(|()| temporary.as_file().sync_all())
-                .map_err(|_| "could not write provider config".to_owned())?;
-            temporary
-                .persist(&path)
-                .map_err(|_| "could not replace provider config".to_owned())?;
-        }
-        Ok(result)
+                operation(config)
+            },
+        )
     }
 }
 
@@ -370,76 +350,10 @@ fn normalize_base_url(kind: ProviderKind, supplied: Option<&str>) -> Result<Stri
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
-fn reject_symlink(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            Err("provider config paths must not be symbolic links".to_owned())
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err("could not inspect provider config path".to_owned()),
-    }
-}
-
-fn private_directory(path: &Path) -> Result<(), String> {
-    reject_symlink(path)?;
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder
-        .create(path)
-        .map_err(|_| "could not create provider config folder")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let permissions = fs::metadata(path)
-            .map_err(|_| "could not inspect provider config folder")?
-            .permissions();
-        if permissions.mode() & 0o077 != 0 {
-            return Err("provider config folder must be private (chmod 700)".to_owned());
-        }
-    }
-    Ok(())
-}
-
-fn private_options() -> OpenOptions {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options
-}
-
-fn ensure_private(file: &File) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if file
-            .metadata()
-            .map_err(|_| "could not inspect provider config permissions")?
-            .permissions()
-            .mode()
-            & 0o077
-            != 0
-        {
-            return Err("provider config files must be private (chmod 600)".to_owned());
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = file;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn test_dir() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();

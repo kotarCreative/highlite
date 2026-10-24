@@ -116,8 +116,8 @@ Same-origin requests from the bundled UI are accepted even when
 Configure provider connections once for future recipes, independently of session
 storage. Both the CLI and local UI read and update the same central config file;
 changes are visible without restarting the relay. This slice stores connections
-and a default model/provider; it does **not** run LLM requests or verify credentials
-with a provider.
+and a default model/provider. Saving a connection does **not** verify credentials;
+the Jira recipe uses the selected connection when generating a draft.
 
 Supported kinds are `openai`, `anthropic`, and `openai-compatible` (including local
 servers). OpenAI and Anthropic use their standard endpoints. Compatible connections
@@ -194,6 +194,19 @@ the folder's ACL to the relay account. Writes use atomic replacement and a
 cross-process lock so concurrent CLI/UI updates do not overwrite each other.
 Malformed or unsupported config files are not overwritten. Credentials are not
 included in capture bundles, provider HTTP responses, or provider CLI output.
+
+## Jira issue recipe
+
+The built-in `jira-issue` recipe analyzes compiled sessions with a custom prompt and
+the default AI provider, automatically drafts an issue when enabled, and lets you
+review/edit the result before explicitly publishing to Jira Cloud. Configure it from
+**Recipes** in the local UI; no shell pipeline is required. It is disabled by default.
+Jira credentials live in the private central config folder, separate from captured
+sessions and run output. Images are opt-in, and ambiguous publication failures are
+never automatically retried.
+
+See [the Jira recipe guide](../../docs/jira-recipe.md) for setup, HTTP endpoints,
+credentials, supported models, data sharing, and recovery behavior.
 
 ## Pipelines
 

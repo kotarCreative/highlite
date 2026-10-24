@@ -15,6 +15,7 @@
     "test:compiler:e2e": "pnpm build && pnpm build:rust && node scripts/compiler-e2e.mjs",
     "test:parakeet": "pnpm build:rust && node scripts/parakeet-e2e.mjs",
     "test:providers": "cargo build -p highlite-relay && node scripts/providers-smoke.mjs",
+    "test:recipes": "cargo build -p highlite-relay && node scripts/recipes-smoke.mjs",
     "setup:macos": "bash scripts/setup-macos.sh",
     "rust:fmt": "cargo fmt --all -- --check",
     "rust:lint": "cargo clippy --workspace --all-targets -- -D warnings",
