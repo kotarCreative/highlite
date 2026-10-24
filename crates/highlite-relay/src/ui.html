@@ -430,6 +430,10 @@
       .wide-field {
         grid-column: 1 / -1;
       }
+      #recipe-config-form > .actions {
+        grid-column: 1 / -1;
+        justify-content: flex-end;
+      }
       .recipe-review {
         display: flex;
         flex-direction: column;
@@ -1212,7 +1216,7 @@
           $('jira-token').value = '';
           $('jira-token').required = !body.recipe.hasApiToken;
           $('jira-token').placeholder = body.recipe.hasApiToken
-            ? 'Leave blank to keep the saved token for this account'
+            ? 'Leave blank to keep saved token'
             : 'Jira Cloud API token';
           if (!settings) {
             updatePublishMode();
