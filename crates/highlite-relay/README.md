@@ -111,6 +111,90 @@ embedded SDK; the UI never accepts file imports.
 Same-origin requests from the bundled UI are accepted even when
 `HIGHLITE_RELAY_ALLOWED_ORIGINS` is empty. All other origins still need to be allowlisted.
 
+## AI provider connections
+
+Configure provider connections once for future recipes, independently of session
+storage. Both the CLI and local UI read and update the same central config file;
+changes are visible without restarting the relay. This slice stores connections
+and a default model/provider; it does **not** run LLM requests or verify credentials
+with a provider.
+
+Supported kinds are `openai`, `anthropic`, and `openai-compatible` (including local
+servers). OpenAI and Anthropic use their standard endpoints. Compatible connections
+require a base URL; HTTPS is required except for loopback HTTP endpoints. URLs must
+not contain embedded credentials, query strings, or fragments.
+
+### CLI
+
+These commands work without a running relay or relay ingest/read tokens:
+
+```sh
+# Prompts for a hidden API key; do not put credentials in command arguments.
+pnpm relay providers connect work --kind openai --model <model-id>
+pnpm relay providers connect personal --kind anthropic --model <model-id>
+
+# Local OpenAI-compatible server without authentication.
+pnpm relay providers connect local --kind openai-compatible \
+  --base-url http://localhost:11434/v1 --model <model-id> --no-api-key
+
+pnpm relay providers list
+pnpm relay providers default local
+pnpm relay providers disconnect personal
+```
+
+For automation, use `--api-key-stdin` to read a key from a pipe or secret file.
+Connection output contains metadata and `hasApiKey`, never the key itself. Connecting
+an existing name updates it; CLI connections prompt for a replacement key unless
+`--api-key-stdin` or `--no-api-key` is specified. An omitted key preserves an existing
+key only when the kind and endpoint are unchanged. `--no-api-key` explicitly clears
+any saved key on a compatible connection. Disconnect to remove a connection entirely.
+
+The first connection becomes the default automatically; use `--default` while
+connecting, or `providers default <id>`, to change it. Removing the default leaves
+no default rather than silently selecting another provider.
+
+### UI
+
+Start a **loopback-bound** relay with `--ui`, authenticate with its read token, and
+open **Providers** in the header. Add or edit a connection, replace its key, choose
+the default, or disconnect it. Editing never retrieves a saved key: a blank key
+preserves it only for the same provider kind and endpoint. API keys are cleared from
+the form on submission, closing the panel, and sign-out; they are never placed in
+browser storage.
+
+Provider HTTP routes require the read token, like local pipeline execution. Treat
+that token as local administrative access. HTTP provider management is disabled for
+non-loopback binds, and ingest tokens cannot manage providers.
+
+| Method | Path                            | Purpose                                                               |
+| ------ | ------------------------------- | --------------------------------------------------------------------- |
+| GET    | `/v1/providers`                 | Metadata only, plus `enabled` and `defaultProvider`                   |
+| POST   | `/v1/providers/{id}`            | Save `{ kind, model, baseUrl?, apiKey?, clearApiKey?, makeDefault? }` |
+| POST   | `/v1/providers/{id}/default`    | Select the default connection                                         |
+| POST   | `/v1/providers/{id}/disconnect` | Remove the connection and its credential                              |
+
+### Central credential storage
+
+The default folder is:
+
+- Linux: `$XDG_CONFIG_HOME/highlite`, or `~/.config/highlite`.
+- macOS: `~/Library/Application Support/Highlite`.
+- Windows: `%APPDATA%/Highlite`.
+
+Set `HIGHLITE_CONFIG_DIR` or pass `--config-dir <dir>` to either the serving command
+or provider CLI commands to override it. The relay also accepts `HIGHLITE_CONFIG_DIR`
+in its env file; provider CLI commands do not load relay env files, so export the
+same override or pass the flag to both.
+
+`providers.json` contains configuration and **plaintext credentials**, not encrypted
+secrets. Keep it out of source control and protect backups. On Unix, the folder must
+be private (`0700`) and files private (`0600`); Highlite creates them with these modes
+and refuses existing files/folders with broader permissions. On Windows, restrict
+the folder's ACL to the relay account. Writes use atomic replacement and a
+cross-process lock so concurrent CLI/UI updates do not overwrite each other.
+Malformed or unsupported config files are not overwritten. Credentials are not
+included in capture bundles, provider HTTP responses, or provider CLI output.
+
 ## Pipelines
 
 Pipelines are trusted local commands attached to a compiled session. They are disabled by

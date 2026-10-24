@@ -18,6 +18,7 @@ Requires Node.js 22 or newer, pnpm 12, and a Rust toolchain with Cargo. Install 
 - `pnpm relay -- --env-file ./relay.env` — run the authenticated relay that accepts and compiles session ZIPs
 - `pnpm test:e2e` — build and run the browser smoke test, then the SDK → Rust compiler e2e (`CHROMIUM_PATH` can override `/usr/bin/chromium`)
 - `pnpm test:compiler:e2e` — build the SDK and compiler, then compile a real browser capture through the Rust CLI
+- `pnpm test:providers` — exercise shared provider configuration through the CLI and relay UI in Chromium
 - `pnpm test:parakeet` — opt-in: run a real Parakeet transcription through `bundle` (see below)
 
 The compiler CLI reads a `CompileInput` JSON object on stdin:
@@ -169,6 +170,15 @@ It lists ingested sessions, shows their summaries, and runs pipelines defined in
 a loopback bind and receive the compiled bundle paths in their environment. Startup
 prints a URL with the read token in the fragment. See the
 [relay README](crates/highlite-relay/README.md) for the pipeline format and run states.
+
+Configure shared AI provider connections with `pnpm relay providers connect <name>
+--kind openai --model <model-id>` (hidden key prompt), or open **Providers** in the
+local relay UI. OpenAI, Anthropic, and OpenAI-compatible/local endpoints are supported.
+Credentials live in the OS user config folder, separate from sessions; use
+`HIGHLITE_CONFIG_DIR` or `--config-dir` to override it. Connections can be listed,
+updated, removed, and selected as the default without a relay restart. This currently
+stores configuration only; it does not verify credentials or run LLM requests. See
+[provider setup and storage](crates/highlite-relay/README.md#ai-provider-connections).
 
 Run `pnpm dev` and open the demo to try the analytics walkthrough. Its local preview shows the exact manifest and summary assembled by the SDK; it does not upload captures.
 

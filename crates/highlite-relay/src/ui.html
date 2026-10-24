@@ -30,6 +30,9 @@
       * {
         box-sizing: border-box;
       }
+      [hidden] {
+        display: none !important;
+      }
       body {
         margin: 0;
         background: var(--bg);
@@ -375,6 +378,54 @@
       .error-output {
         border-color: #f3c6c2;
       }
+      .providers-panel {
+        padding: 20px;
+        margin-bottom: 18px;
+      }
+      .providers-panel h2 {
+        margin: 0;
+        font-size: 17px;
+      }
+      .provider-form {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }
+      .provider-form label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .provider-form input:not([type='checkbox']),
+      .provider-form select {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+      }
+      .provider-form .provider-options {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+      }
+      .provider-row {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .provider-row .hint {
+        margin: 2px 0 0;
+        overflow-wrap: anywhere;
+      }
       .run-history {
         display: flex;
         flex-direction: column;
@@ -432,6 +483,15 @@
         <p id="status-line">Connecting…</p>
       </div>
       <div class="actions">
+        <button
+          id="providers-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="providers-panel"
+          hidden
+        >
+          Providers
+        </button>
         <button id="refresh" type="button">Refresh</button>
         <button id="signout" type="button" class="ghost" hidden>Change token</button>
       </div>
@@ -456,6 +516,71 @@
           <button class="primary" type="submit">Open</button>
         </form>
         <p id="gate-error" class="error" hidden></p>
+      </section>
+
+      <section
+        id="providers-panel"
+        class="panel providers-panel"
+        aria-labelledby="providers-title"
+        hidden
+      >
+        <h2 id="providers-title">AI providers</h2>
+        <p class="hint">
+          Configure once for future recipes. Keys are stored in the relay's central config folder,
+          never in this browser. Saving does not verify credentials or send capture data.
+        </p>
+        <p id="providers-disabled" class="hint" hidden>
+          Provider management requires a relay bound to loopback. You can also configure providers
+          locally with the CLI.
+        </p>
+        <div id="providers-list"></div>
+        <form id="provider-form" class="provider-form" autocomplete="off">
+          <label
+            >Connection name
+            <input
+              id="provider-id"
+              required
+              pattern="[A-Za-z0-9_-]{1,64}"
+              maxlength="64"
+              placeholder="work"
+            />
+          </label>
+          <label
+            >Provider
+            <select id="provider-kind">
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="openai-compatible">OpenAI-compatible / local</option>
+            </select>
+          </label>
+          <label
+            >Default model
+            <input id="provider-model" required maxlength="256" placeholder="Model identifier" />
+          </label>
+          <label id="provider-url-label" hidden
+            >Base URL
+            <input id="provider-url" type="url" placeholder="http://localhost:11434/v1" />
+          </label>
+          <label
+            >API key
+            <input
+              id="provider-key"
+              type="password"
+              autocomplete="new-password"
+              spellcheck="false"
+              maxlength="16384"
+              placeholder="Required for cloud providers"
+            />
+          </label>
+          <label class="provider-options"
+            ><input id="provider-default" type="checkbox" /> Use by default</label
+          >
+          <div class="actions">
+            <button id="provider-save" class="primary" type="submit">Save connection</button>
+            <button id="provider-cancel" type="button">Clear</button>
+          </div>
+        </form>
+        <p id="provider-message" class="hint" role="status"></p>
       </section>
 
       <div id="workspace" class="workspace" hidden>
@@ -531,6 +656,10 @@
         sessions: [],
         pipelines: [],
         pipelinesEnabled: false,
+        providers: [],
+        defaultProvider: null,
+        providersEnabled: false,
+        editingProvider: null,
         selected: null,
         pollTimer: null,
       };
@@ -573,6 +702,13 @@
         workspaceEl.hidden = true;
         gateEl.hidden = false;
         $('signout').hidden = true;
+        $('providers-toggle').hidden = true;
+        $('providers-toggle').setAttribute('aria-expanded', 'false');
+        $('providers-panel').hidden = true;
+        state.providers = [];
+        resetProviderForm();
+        $('providers-list').replaceChildren();
+        $('provider-message').textContent = '';
         $('gate-error').hidden = !message;
         $('gate-error').textContent = message || '';
         $('token-input').focus();
@@ -880,6 +1016,169 @@
         renderDetail(session);
       }
 
+      function updateProviderKind() {
+        const compatible = $('provider-kind').value === 'openai-compatible';
+        $('provider-url-label').hidden = !compatible;
+        $('provider-url').required = compatible;
+        const existing = state.providers.find((provider) => provider.id === state.editingProvider);
+        const sameEndpoint =
+          existing &&
+          existing.kind === $('provider-kind').value &&
+          (!compatible || existing.baseUrl === $('provider-url').value.trim().replace(/\/+$/, ''));
+        $('provider-key').required = !compatible && !(sameEndpoint && existing.hasApiKey);
+        $('provider-key').placeholder =
+          sameEndpoint && existing.hasApiKey
+            ? 'Leave blank to keep the saved key'
+            : compatible
+              ? 'Optional for local endpoints'
+              : 'Required for cloud providers';
+      }
+
+      function resetProviderForm() {
+        $('provider-form').reset();
+        state.editingProvider = null;
+        $('provider-id').readOnly = false;
+        updateProviderKind();
+      }
+
+      function renderProviders() {
+        const container = $('providers-list');
+        container.replaceChildren();
+        $('providers-disabled').hidden = state.providersEnabled;
+        $('provider-form').hidden = !state.providersEnabled;
+        if (!state.providersEnabled) return;
+        if (!state.providers.length) {
+          const empty = document.createElement('p');
+          empty.className = 'hint';
+          empty.textContent = 'No providers configured. Add your first connection below.';
+          container.append(empty);
+        }
+        for (const provider of state.providers) {
+          const row = document.createElement('div');
+          row.className = 'provider-row';
+          const description = document.createElement('div');
+          const title = document.createElement('strong');
+          title.textContent =
+            provider.id + (provider.id === state.defaultProvider ? ' · Default' : '');
+          const details = document.createElement('p');
+          details.className = 'hint';
+          details.textContent = `${provider.kind} · ${provider.model} · ${provider.hasApiKey ? 'Key saved' : 'No API key'} · ${provider.baseUrl}`;
+          description.append(title, details);
+          const actions = document.createElement('div');
+          actions.className = 'actions';
+          const edit = document.createElement('button');
+          edit.type = 'button';
+          edit.textContent = 'Edit';
+          edit.addEventListener('click', () => {
+            resetProviderForm();
+            state.editingProvider = provider.id;
+            $('provider-id').value = provider.id;
+            $('provider-id').readOnly = true;
+            $('provider-kind').value = provider.kind;
+            $('provider-model').value = provider.model;
+            $('provider-url').value = provider.baseUrl;
+            $('provider-default').checked = provider.id === state.defaultProvider;
+            updateProviderKind();
+            $('provider-model').focus();
+          });
+          actions.append(edit);
+          for (const [action, label] of [
+            ['default', 'Use by default'],
+            ['disconnect', 'Disconnect'],
+          ]) {
+            if (action === 'default' && provider.id === state.defaultProvider) continue;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.addEventListener('click', async () => {
+              if (
+                action === 'disconnect' &&
+                !confirm(`Remove provider "${provider.id}" and its stored key?`)
+              )
+                return;
+              button.disabled = true;
+              try {
+                await api(`/v1/providers/${encodeURIComponent(provider.id)}/${action}`, {
+                  method: 'POST',
+                });
+                resetProviderForm();
+                await loadProviders();
+                $('provider-message').textContent =
+                  action === 'disconnect' ? 'Connection removed.' : 'Default provider updated.';
+              } catch (error) {
+                toast(error.message);
+              } finally {
+                button.disabled = false;
+              }
+            });
+            actions.append(button);
+          }
+          row.append(description, actions);
+          container.append(row);
+        }
+        if (state.providers.length && !state.defaultProvider) {
+          const hint = document.createElement('p');
+          hint.className = 'hint';
+          hint.textContent = 'No default provider selected. Choose one explicitly.';
+          container.append(hint);
+        }
+      }
+
+      async function loadProviders() {
+        const result = await api('/v1/providers');
+        state.providers = result.providers || [];
+        state.defaultProvider = result.defaultProvider;
+        state.providersEnabled = Boolean(result.enabled);
+        renderProviders();
+      }
+
+      $('providers-toggle').addEventListener('click', () => {
+        const opening = $('providers-panel').hidden;
+        $('providers-panel').hidden = !opening;
+        $('providers-toggle').setAttribute('aria-expanded', String(opening));
+        if (opening) void loadProviders().catch((error) => toast(error.message));
+        else $('provider-key').value = '';
+      });
+      $('provider-kind').addEventListener('change', updateProviderKind);
+      $('provider-url').addEventListener('input', updateProviderKind);
+      $('provider-cancel').addEventListener('click', resetProviderForm);
+      $('provider-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const id = $('provider-id').value.trim();
+        if (!state.editingProvider && state.providers.some((provider) => provider.id === id)) {
+          toast('That connection name already exists. Use Edit to update it.');
+          return;
+        }
+        const input = {
+          kind: $('provider-kind').value,
+          model: $('provider-model').value.trim(),
+          baseUrl:
+            $('provider-kind').value === 'openai-compatible'
+              ? $('provider-url').value.trim()
+              : null,
+          makeDefault: $('provider-default').checked,
+        };
+        const key = $('provider-key').value;
+        if (key) input.apiKey = key;
+        $('provider-key').value = '';
+        $('provider-save').disabled = true;
+        try {
+          await api(`/v1/providers/${encodeURIComponent(id)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(input),
+          });
+          resetProviderForm();
+          await loadProviders();
+          $('provider-message').textContent =
+            'Connection saved. Credentials have not been verified with the provider.';
+        } catch (error) {
+          toast(error.message);
+        } finally {
+          $('provider-save').disabled = false;
+        }
+      });
+
       async function loadWorkspace() {
         setStatus('Loading sessions…');
         try {
@@ -894,6 +1193,8 @@
           gateEl.hidden = true;
           workspaceEl.hidden = false;
           $('signout').hidden = false;
+          $('providers-toggle').hidden = false;
+          if (!$('providers-panel').hidden) await loadProviders();
 
           if (state.selected) {
             const current = state.sessions.find(

@@ -4,11 +4,29 @@ use std::error::Error;
 use highlite_relay::{build_app, config_from_args, resume_pending_webhooks};
 use tokio::net::TcpListener;
 
+mod provider_cli;
+
 const USAGE: &str = "\
 highlite-relay — receive and compile Highlite capture bundles
 
 Usage:
   highlite-relay --env-file <path> [--env-file <path> ...]
+  highlite-relay providers connect <id> --kind <kind> --model <model> [options]
+  highlite-relay providers list [--config-dir <dir>]
+  highlite-relay providers default <id> [--config-dir <dir>]
+  highlite-relay providers disconnect <id> [--config-dir <dir>]
+
+Provider connection options:
+  --kind <kind>       openai, anthropic, or openai-compatible
+  --model <model>     default model for this connection
+  --base-url <url>    required for openai-compatible endpoints
+  --api-key-stdin     read the key from stdin instead of a hidden prompt
+  --no-api-key        unauthenticated openai-compatible endpoint
+  --default          use this connection by default (first is automatic)
+  --config-dir <dir>  central config override; also available when serving
+
+Credentials are stored in the OS user config folder under Highlite, or
+HIGHLITE_CONFIG_DIR. They are never included in provider list output.
 
 Options:
   --env-file <path>   relay configuration file; repeatable, later files win
@@ -22,6 +40,7 @@ the file, and --bind / --data-dir override both. Supported names:
 
   HIGHLITE_RELAY_BIND                    default 127.0.0.1:8787
   HIGHLITE_RELAY_DATA_DIR                default ./highlite-relay-data
+  HIGHLITE_CONFIG_DIR                    central provider config directory
   HIGHLITE_RELAY_INGEST_TOKEN            comma-separated ingest tokens
   HIGHLITE_RELAY_READ_TOKEN              comma-separated read tokens
   HIGHLITE_RELAY_ALLOWED_HOSTS           comma-separated Host allowlist
@@ -65,6 +84,10 @@ Endpoints:
   POST /v1/sessions/{id}/pipelines/{name}
   GET  /v1/pipelines             configured pipelines
   GET  /v1/runs/{id}             pipeline run status and output
+  GET  /v1/providers             credential-free provider metadata
+  POST /v1/providers/{id}        save a provider connection
+  POST /v1/providers/{id}/default
+  POST /v1/providers/{id}/disconnect
   GET  /healthz
   GET  /                         local sessions UI with --ui
 
@@ -82,6 +105,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .any(|argument| argument == "--help" || argument == "-h")
     {
         print!("{USAGE}");
+        return Ok(());
+    }
+
+    if args.first().is_some_and(|argument| argument == "providers") {
+        provider_cli::run(&args[1..])?;
         return Ok(());
     }
 

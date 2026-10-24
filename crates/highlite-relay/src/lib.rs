@@ -45,6 +45,8 @@ use tokio::sync::Semaphore;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+pub mod providers;
+
 const MANIFEST_SCHEMA_VERSION: &str = "0.1.0";
 const MAX_PATH_COMPONENTS: usize = 16;
 const MAX_RUN_OUTPUT_BYTES: usize = 64 * 1024;
@@ -57,6 +59,7 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub struct RelayConfig {
     pub bind: String,
     pub data_dir: PathBuf,
+    pub config_dir: PathBuf,
     pub ingest_tokens: Vec<String>,
     pub read_tokens: Vec<String>,
     pub allowed_hosts: Vec<String>,
@@ -350,6 +353,10 @@ pub fn build_app(config: RelayConfig) -> Result<Router, String> {
     };
 
     let api = Router::new()
+        .route("/v1/providers", get(list_providers))
+        .route("/v1/providers/{id}", post(connect_provider))
+        .route("/v1/providers/{id}/default", post(default_provider))
+        .route("/v1/providers/{id}/disconnect", post(disconnect_provider))
         .route("/v1/sessions", get(list_sessions).post(ingest_session))
         .route("/v1/sessions/{id}", get(get_session))
         .route("/v1/sessions/{id}/bundle.zip", get(get_bundle))
@@ -398,6 +405,108 @@ async fn health() -> impl IntoResponse {
         "compiler": highlite_compiler::COMPILER_NAME,
         "version": highlite_compiler::COMPILER_VERSION,
     }))
+}
+
+async fn list_providers(State(state): State<AppState>) -> Response {
+    let enabled = bind_is_loopback(&state.config.bind);
+    if !enabled {
+        return Json(json!({ "enabled": false, "providers": [], "defaultProvider": null }))
+            .into_response();
+    }
+    let store = providers::ProviderStore::new(state.config.config_dir.clone());
+    match tokio::task::spawn_blocking(move || store.list()).await {
+        Ok(Ok(list)) => Json(json!({
+            "enabled": true,
+            "providers": list.providers,
+            "defaultProvider": list.default_provider,
+        }))
+        .into_response(),
+        Ok(Err(error)) => error_response(StatusCode::INTERNAL_SERVER_ERROR, error),
+        _ => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not load provider configuration",
+        ),
+    }
+}
+
+async fn connect_provider(
+    State(state): State<AppState>,
+    RoutePath(id): RoutePath<String>,
+    request: Request,
+) -> Response {
+    if !bind_is_loopback(&state.config.bind) {
+        return error_response(
+            StatusCode::FORBIDDEN,
+            "provider management requires a loopback bind",
+        );
+    }
+    if !request
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"))
+        })
+    {
+        return error_response(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "content type must be application/json",
+        );
+    }
+    let bytes = match to_bytes(request.into_body(), 64 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return error_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "provider configuration is too large",
+            );
+        }
+    };
+    let input = match serde_json::from_slice::<providers::ConnectProvider>(&bytes) {
+        Ok(input) => input,
+        Err(_) => return error_response(StatusCode::BAD_REQUEST, "invalid provider configuration"),
+    };
+    provider_change(state, move |store| store.connect(&id, input)).await
+}
+
+async fn default_provider(
+    State(state): State<AppState>,
+    RoutePath(id): RoutePath<String>,
+) -> Response {
+    provider_change(state, move |store| store.set_default(&id)).await
+}
+
+async fn disconnect_provider(
+    State(state): State<AppState>,
+    RoutePath(id): RoutePath<String>,
+) -> Response {
+    provider_change(state, move |store| store.disconnect(&id)).await
+}
+
+async fn provider_change(
+    state: AppState,
+    operation: impl FnOnce(providers::ProviderStore) -> Result<providers::ProviderList, String>
+    + Send
+    + 'static,
+) -> Response {
+    if !bind_is_loopback(&state.config.bind) {
+        return error_response(
+            StatusCode::FORBIDDEN,
+            "provider management requires a loopback bind",
+        );
+    }
+    let store = providers::ProviderStore::new(state.config.config_dir.clone());
+    match tokio::task::spawn_blocking(move || operation(store)).await {
+        Ok(Ok(list)) => Json(list).into_response(),
+        Ok(Err(error)) => error_response(StatusCode::BAD_REQUEST, error),
+        Err(_) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not update provider configuration",
+        ),
+    }
 }
 
 async fn guard_request(State(state): State<AppState>, request: Request, next: Next) -> Response {
@@ -1727,7 +1836,10 @@ fn bind_is_loopback(bind: &str) -> bool {
     } else {
         bind.rsplit_once(':').map(|(host, _)| host).unwrap_or(bind)
     };
-    host.eq_ignore_ascii_case("localhost") || host == "::1" || host.starts_with("127.")
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Parse relay CLI arguments into a validated configuration.
@@ -1735,6 +1847,7 @@ pub fn config_from_args(args: &[String]) -> Result<RelayConfig, String> {
     let mut env_files: Vec<PathBuf> = Vec::new();
     let mut bind_override: Option<String> = None;
     let mut data_dir_override: Option<PathBuf> = None;
+    let mut config_dir_override: Option<PathBuf> = None;
     let mut ui_override: Option<bool> = None;
     let mut index = 0;
     while index < args.len() {
@@ -1762,6 +1875,12 @@ pub fn config_from_args(args: &[String]) -> Result<RelayConfig, String> {
                         .ok_or_else(|| "--data-dir needs a value".to_owned())?,
                 ));
             }
+            "--config-dir" => {
+                index += 1;
+                config_dir_override = Some(PathBuf::from(
+                    args.get(index).ok_or("--config-dir needs a value")?,
+                ));
+            }
             "--ui" => ui_override = Some(true),
             flag if flag.starts_with('-') => {
                 return Err(format!(
@@ -1781,9 +1900,20 @@ pub fn config_from_args(args: &[String]) -> Result<RelayConfig, String> {
     }
     let mut values = load_env_files(&env_files)?;
     for (name, value) in std::env::vars() {
-        if name.starts_with("HIGHLITE_RELAY_") || name == "HIGHLITE_ASR_COMMAND" {
+        if name.starts_with("HIGHLITE_RELAY_")
+            || name == "HIGHLITE_ASR_COMMAND"
+            || name == "HIGHLITE_CONFIG_DIR"
+        {
             values.insert(name, value);
         }
+    }
+    if let Some(path) = config_dir_override {
+        values.insert(
+            "HIGHLITE_CONFIG_DIR".to_owned(),
+            path.to_str()
+                .ok_or("config directory must be valid UTF-8")?
+                .to_owned(),
+        );
     }
     config_from_values(values, bind_override, data_dir_override, ui_override)
 }
@@ -1907,6 +2037,7 @@ fn config_from_values(
     let mut config = RelayConfig {
         bind,
         data_dir,
+        config_dir: providers::config_dir(lookup("HIGHLITE_CONFIG_DIR").map(PathBuf::from))?,
         ingest_tokens: split_list(lookup("HIGHLITE_RELAY_INGEST_TOKEN")),
         read_tokens: split_list(lookup("HIGHLITE_RELAY_READ_TOKEN")),
         allowed_hosts: split_list(lookup("HIGHLITE_RELAY_ALLOWED_HOSTS")),
@@ -2156,6 +2287,7 @@ mod tests {
         RelayConfig {
             bind: "127.0.0.1:0".to_owned(),
             data_dir: temp.path().to_path_buf(),
+            config_dir: temp.path().join("config"),
             ingest_tokens: vec!["ingest-secret".to_owned()],
             read_tokens: vec!["read-secret".to_owned()],
             allowed_hosts: vec!["relay.test".to_owned()],
@@ -2202,6 +2334,171 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    fn provider_request(method: Method, path: &str, input: Value, token: &str) -> Request<Body> {
+        let mut request = request(
+            method,
+            path,
+            Body::from(serde_json::to_vec(&input).unwrap()),
+        );
+        request
+            .headers_mut()
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        request.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        request
+    }
+
+    #[tokio::test]
+    async fn provider_http_and_local_configuration_share_a_redacted_store() {
+        let temp = TempDir::new().unwrap();
+        let (app, config) = test_app(&temp);
+        let input = json!({ "kind": "openai", "model": "test-model", "apiKey": "private-api-key" });
+        for token in ["", "ingest-secret"] {
+            let response = app
+                .clone()
+                .oneshot(provider_request(
+                    Method::POST,
+                    "/v1/providers/work",
+                    input.clone(),
+                    token,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+        let response = app
+            .clone()
+            .oneshot(provider_request(
+                Method::POST,
+                "/v1/providers/work",
+                input,
+                "read-secret",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(!String::from_utf8_lossy(&body).contains("private-api-key"));
+        let list: providers::ProviderList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(list.default_provider.as_deref(), Some("work"));
+        assert!(list.providers[0].has_api_key);
+        let store = providers::ProviderStore::new(config.config_dir.clone());
+        assert!(store.list().unwrap().providers[0].has_api_key);
+        store
+            .connect(
+                "local",
+                providers::ConnectProvider {
+                    kind: providers::ProviderKind::OpenaiCompatible,
+                    model: "local-model".to_owned(),
+                    base_url: Some("http://localhost:11434/v1".to_owned()),
+                    api_key: None,
+                    clear_api_key: false,
+                    make_default: true,
+                },
+            )
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(provider_request(
+                Method::GET,
+                "/v1/providers",
+                Value::Null,
+                "read-secret",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["defaultProvider"], "local");
+        assert_eq!(body["providers"].as_array().unwrap().len(), 2);
+        let response = app
+            .clone()
+            .oneshot(provider_request(
+                Method::POST,
+                "/v1/providers/work/default",
+                Value::Null,
+                "read-secret",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            store.list().unwrap().default_provider.as_deref(),
+            Some("work")
+        );
+        let response = app
+            .oneshot(provider_request(
+                Method::POST,
+                "/v1/providers/work/disconnect",
+                Value::Null,
+                "read-secret",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(store.list().unwrap().default_provider.is_none());
+        assert!(
+            !fs::read_to_string(config.config_dir.join("providers.json"))
+                .unwrap()
+                .contains("private-api-key")
+        );
+        assert!(!config.data_dir.join("providers.json").exists());
+    }
+
+    #[tokio::test]
+    async fn provider_management_is_local_only_and_redacts_invalid_input() {
+        let temp = TempDir::new().unwrap();
+        let (app, mut config) = test_app(&temp);
+        let response = app
+            .oneshot(provider_request(
+                Method::POST,
+                "/v1/providers/work",
+                json!({"apiKey": "never-echo-this-secret", "kind": "invalid"}),
+                "read-secret",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(!String::from_utf8_lossy(&body).contains("never-echo"));
+        config.bind = "0.0.0.0:8787".to_owned();
+        let app = build_app(config.clone()).unwrap();
+        for path in [
+            "/v1/providers/work",
+            "/v1/providers/work/default",
+            "/v1/providers/work/disconnect",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(provider_request(
+                    Method::POST,
+                    path,
+                    json!({"kind": "openai", "model": "test", "apiKey": "secret"}),
+                    "read-secret",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+        let response = app
+            .oneshot(provider_request(
+                Method::GET,
+                "/v1/providers",
+                Value::Null,
+                "read-secret",
+            ))
+            .await
+            .unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["enabled"], false);
+        assert!(!config.config_dir.exists());
     }
 
     #[tokio::test]
@@ -2554,6 +2851,10 @@ mod tests {
     #[test]
     fn builds_configuration_from_values() {
         let values = HashMap::from([
+            (
+                "HIGHLITE_CONFIG_DIR".to_owned(),
+                "private-config".to_owned(),
+            ),
             ("HIGHLITE_RELAY_BIND".to_owned(), "0.0.0.0:9999".to_owned()),
             (
                 "HIGHLITE_RELAY_DATA_DIR".to_owned(),
@@ -2634,6 +2935,7 @@ mod tests {
         let config = config_from_values(values, None, None, None).expect("config should parse");
         assert_eq!(config.bind, "0.0.0.0:9999");
         assert_eq!(config.data_dir, PathBuf::from("/tmp/relay"));
+        assert_eq!(config.config_dir, PathBuf::from("private-config"));
         assert_eq!(
             config.ingest_tokens,
             vec!["ingest-a".to_owned(), "ingest-b".to_owned()]
