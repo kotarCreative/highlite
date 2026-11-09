@@ -78,8 +78,29 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  async function assertView(view) {
+    await page.waitForFunction(
+      (name) =>
+        location.hash === `#${name}` &&
+        document.querySelector(`[data-app-view="${name}"]`)?.hidden === false &&
+        document.querySelector(`nav a[href="#${name}"]`)?.getAttribute('aria-current') === 'page',
+      view,
+    );
+    assert.equal(new URL(page.url()).hash, `#${view}`);
+    assert.equal(await page.locator('[data-app-view]:visible').count(), 1);
+    assert.equal(await page.locator(`[data-app-view="${view}"]`).isVisible(), true);
+    assert.equal(await page.locator(`nav a[href="#${view}"][aria-current="page"]`).count(), 1);
+  }
+  async function navigate(view) {
+    await page
+      .getByRole('link', { name: view[0].toUpperCase() + view.slice(1), exact: true })
+      .click();
+    await assertView(view);
+  }
   await page.goto(`http://${address}/#token=smoke-read`);
-  await page.getByRole('button', { name: 'Providers', exact: true }).click();
+  await assertView('sessions');
+  assert.ok(!page.url().includes('smoke-read'));
+  await navigate('providers');
   await page.getByText('No providers configured.').waitFor();
   await page.getByLabel('Connection name').fill('work');
   await page.getByLabel('Default model').fill('smoke-model');
@@ -96,7 +117,7 @@ try {
   assert.equal(await page.getByLabel('API key', { exact: true }).inputValue(), '');
   await page.getByLabel('Default model').fill('updated-model');
   await page.getByRole('button', { name: 'Save connection' }).click();
-  await page.getByText('updated-model', { exact: false }).waitFor();
+  await row.getByText('updated-model', { exact: false }).waitFor();
   assert.ok(
     (await readFile(join(configDir, 'providers.json'), 'utf8')).includes('browser-secret-key'),
   );
@@ -112,8 +133,8 @@ try {
     '--no-api-key',
     '--default',
   );
-  await page.getByRole('button', { name: 'Providers', exact: true }).click();
-  await page.getByRole('button', { name: 'Providers', exact: true }).click();
+  await navigate('sessions');
+  await navigate('providers');
   await page.getByText('local · Default', { exact: true }).waitFor();
   await row.getByRole('button', { name: 'Use by default' }).click();
   await page.getByText('Default provider updated.', { exact: true }).waitFor();
@@ -133,7 +154,8 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.getByRole('button', { name: 'Change token' }).click();
-  assert.equal(await page.locator('#providers-panel').isVisible(), false);
+  assert.equal(await page.locator('[data-app-view]:visible').count(), 0);
+  assert.equal(await page.locator('nav a[aria-current="page"]').count(), 0);
   assert.deepEqual(errors, []);
   process.stdout.write('Provider CLI/UI smoke test passed.\n');
 } finally {

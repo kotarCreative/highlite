@@ -108,6 +108,14 @@ clears the address bar. The UI lists sessions newest first, shows page, duration
 and the compiled summary, and runs configured pipelines. Uploads still come from the
 embedded SDK; the UI never accepts file imports.
 
+Recipe setup and later edits use the same compact four-step walkthrough. An explicit
+**Test connection** action checks Jira credentials without saving or creating an issue;
+project and issue-type dropdowns load choices from Jira instead of asking for IDs.
+Sessions, Recipes, and Providers have separate views in the main navigation, so
+configuration forms do not share the session-review screen.
+The framework-free UI shares a central theme and reusable controls; see
+[the relay UI guide](../../docs/relay-ui.md) for its structure and validation workflow.
+
 Same-origin requests from the bundled UI are accepted even when
 `HIGHLITE_RELAY_ALLOWED_ORIGINS` is empty. All other origins still need to be allowlisted.
 
@@ -159,7 +167,7 @@ Start a **loopback-bound** relay with `--ui`, authenticate with its read token, 
 open **Providers** in the header. Add or edit a connection, replace its key, choose
 the default, or disconnect it. Editing never retrieves a saved key: a blank key
 preserves it only for the same provider kind and endpoint. API keys are cleared from
-the form on submission, closing the panel, and sign-out; they are never placed in
+the form on submission, leaving Providers, and sign-out; they are never placed in
 browser storage.
 
 Provider HTTP routes require the read token, like local pipeline execution. Treat
@@ -198,7 +206,7 @@ included in capture bundles, provider HTTP responses, or provider CLI output.
 ## Jira issue recipe
 
 The built-in `jira-issue` recipe analyzes compiled sessions with a custom prompt and
-the default AI provider and automatically drafts an issue when enabled. Choose
+the default AI provider and can automatically draft issues for new sessions. Choose
 **Review first** to edit and approve the draft, or **Publish automatically** to create
 the Jira Cloud issue without review. Configure it from **Recipes** in the local UI; no
 shell pipeline is required. It is disabled by default. Jira credentials live in the

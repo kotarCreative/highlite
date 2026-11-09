@@ -14,11 +14,19 @@ and Create issues permissions for the destination project.
 
 ## Set up in the UI
 
-1. Configure an AI connection under **Providers**, and select it as the default.
-2. Open **Recipes** in a loopback-bound relay started with `--ui`.
-3. Enter your Jira site origin (for example `https://team.atlassian.net`), account
-   email, API token, project key, and numeric issue type ID.
-4. Write the custom analysis prompt. For example:
+1. Open **Recipes** in a loopback-bound relay started with `--ui`. Setup and later
+   edits both use four short steps: **Connect**, **Destination**, **Instructions**,
+   and **Activate**. Jira issue is currently the only built-in recipe.
+2. Enter your Jira site origin (for example `https://team.atlassian.net`), account
+   email, and API token, then choose **Test connection**. Highlite verifies the account
+   and loads projects where it can create issues. On the next step, choose a project
+   and issue type by name—no ID lookup is needed. Subtasks are excluded because this
+   recipe does not supply a parent issue. **Back** preserves your entries. Navigation
+   does not save configuration; connection testing and dropdown loading make read-only
+   Jira requests, never create an issue, and never send capture data.
+3. Check the default AI connection shown with the instructions. Configure one under
+   **Providers** if needed, and select it as the default.
+4. Write the custom analysis prompt, or use the example as a starting point:
 
    > Focus on user-facing defects in the checkout flow. Include reproduction steps,
    > observed behavior, expected behavior supported by the narration, and evidence
@@ -34,17 +42,32 @@ and Create issues permissions for the destination project.
      review. This also applies when you manually regenerate a draft with the recipe
      configured for automatic publication.
 
-7. Optionally enable **Automatically draft new sessions**, then save. This starts the
-   flow when a new session compiles; with it off, you can still start the flow manually
-   for any ready session.
+7. Review the outcome and data-sharing summary, choose **Enable this recipe**, and
+   optionally enable **Automatically draft new sessions**, then choose **Save recipe**.
+   Automatic drafting starts the flow when a new session compiles; with it off, you
+   can still start the flow manually for any ready session. Image sharing is a separate
+   opt-in and is off by default.
 
-Use the issue type **ID**, not its display name. Project administrators can find IDs
-in Jira settings, or use Jira's create-issue metadata endpoint
-`GET /rest/api/3/issue/createmeta/{projectIdOrKey}/issuetypes`. Required custom fields
-and allowed values vary by project and issue type; automatic discovery is not yet
-part of the setup form.
+After the first save, **Recipes** keeps the same step-by-step editing experience.
+Reopening the page requires testing the saved connection again before continuing.
+A blank token uses the saved credential only for the same site and account. Changing
+the URL, email, or token invalidates loaded choices and requires another test. All
+changes are saved together; saving does not generate a draft or publish an issue.
 
-Saving stores configuration; it does not verify Jira credentials or create an issue.
+**Sessions**, **Recipes**, and **Providers** are separate screens in the main
+navigation. You can visit Providers from the instructions step and return without
+losing your recipe entries. Use Sessions to review generated drafts; recipe setup
+does not share that screen.
+
+The dropdowns use Jira's paginated project search and create-issue type metadata.
+Projects and issue types depend on the account's permissions. Empty lists and load
+failures are shown explicitly; failed issue-type loading can be retried. A successful
+connection test confirms account access and available destinations, **not** that every
+required project-specific field has been supplied. Custom fields still use the optional
+**Advanced · extra Jira fields** JSON mapping on the destination step; they are not
+automatically discovered in this slice.
+
+Saving stores configuration; it does not perform another Jira request or create an issue.
 API tokens are never retrieved by the UI. A blank token on edit preserves the saved
 token only for the same site and account email; changing either requires a new token.
 
@@ -156,6 +179,8 @@ carry a revision to prevent stale tabs from approving changed content.
 | ------ | ---------------------------------------------- | ------------------------------------------------------------------------- |
 | GET    | `/v1/recipes/jira-issue`                       | Credential-free settings, version, `hasApiToken`, and `managementEnabled` |
 | POST   | `/v1/recipes/jira-issue`                       | Save `{settings, apiToken?}`; loopback only                               |
+| POST   | `/v1/recipes/jira-issue/connection`            | Test `{siteUrl, email, apiToken?}`; return `displayName` and `projects`   |
+| POST   | `/v1/recipes/jira-issue/issue-types`           | Load `{siteUrl, email, apiToken?, projectKey}`; return `issueTypes`       |
 | GET    | `/v1/sessions/{id}/recipes/jira-issue`         | Return `{run}` (`null` if none)                                           |
 | POST   | `/v1/sessions/{id}/recipes/jira-issue`         | Generate/retry/regenerate a draft; may publish automatically; `202`       |
 | POST   | `/v1/sessions/{id}/recipes/jira-issue/draft`   | Save `{revision, draft: {summary, description}}`                          |
@@ -163,6 +188,13 @@ carry a revision to prevent stale tabs from approving changed content.
 
 `settings` has the following shape. Omit `apiToken` on updates to preserve the token
 for the same account; never embed it in a URL or command argument.
+
+Both discovery endpoints require the read token and a loopback bind. They can use
+matching saved credentials even when the recipe is disabled, and never persist the
+submitted token. Choices are `{value, name}` objects; project values are keys and issue
+type values are numeric IDs. Requests have a 30-second overall deadline, 10-second
+per-request timeout, bounded response bodies, and at most 50 pages. Upstream redirects
+and `nextPage` URLs are never followed. Errors omit upstream response bodies and credentials.
 
 ```json
 {

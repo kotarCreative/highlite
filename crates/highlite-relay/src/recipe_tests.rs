@@ -26,6 +26,8 @@ struct MockRemote {
     jira_status: AtomicU16,
     invalid_ai: std::sync::atomic::AtomicBool,
     bodies: Mutex<Vec<Value>>,
+    metadata_status: AtomicU16,
+    metadata_paths: Mutex<Vec<String>>,
 }
 
 async fn remote(State(state): State<Arc<MockRemote>>, request: axum::extract::Request) -> Response {
@@ -37,6 +39,49 @@ async fn remote(State(state): State<Arc<MockRemote>>, request: axum::extract::Re
         .to_str()
         .unwrap()
         .to_owned();
+    if request.method() == Method::GET {
+        assert_eq!(
+            auth,
+            format!(
+                "Basic {}",
+                STANDARD.encode("person@example.com:jira-secret")
+            )
+        );
+        let uri = request.uri().to_string();
+        state.metadata_paths.lock().unwrap().push(uri.clone());
+        let status = state.metadata_status.load(Ordering::SeqCst);
+        if status != 0 {
+            return (
+                StatusCode::from_u16(status).unwrap(),
+                [("location", "http://127.0.0.1:1/stolen")],
+                Json(json!({"error": "jira-secret ai-secret"})),
+            )
+                .into_response();
+        }
+        let second = uri.contains("startAt=1");
+        let body = match path.as_str() {
+            "/rest/api/3/myself" => {
+                json!({"accountId": "user-1", "active": true, "displayName": "Test user"})
+            }
+            "/rest/api/3/project/search" => {
+                assert!(uri.contains("action=create"));
+                if second {
+                    json!({"values": [{"key": "OTHER", "name": "Other project"}], "total": 2})
+                } else {
+                    json!({"values": [{"key": "TEAM", "name": "Team project"}], "total": 2, "nextPage": "https://do-not-follow.example"})
+                }
+            }
+            "/rest/api/3/issue/createmeta/TEAM/issuetypes" => {
+                if second {
+                    json!({"issueTypes": [{"id": "10002", "name": "Subtask", "subtask": true}], "total": 2})
+                } else {
+                    json!({"issueTypes": [{"id": "10001", "name": "Bug", "subtask": false}], "total": 2})
+                }
+            }
+            _ => panic!("unexpected metadata path {path}"),
+        };
+        return Json(body).into_response();
+    }
     let bytes = to_bytes(request.into_body(), 8 * 1024 * 1024)
         .await
         .unwrap();
@@ -168,6 +213,132 @@ fn provider(root: &std::path::Path, base: &str) {
             },
         )
         .unwrap();
+}
+
+#[tokio::test]
+async fn jira_discovery_verifies_credentials_and_paginates_without_saving_or_publishing() {
+    let temp = TempDir::new().unwrap();
+    let config = test_config(&temp);
+    let (base, remote, task) = mock_remote().await;
+    let app = crate::build_app(config.clone()).unwrap();
+    let connection = "/v1/recipes/jira-issue/connection";
+    let types = "/v1/recipes/jira-issue/issue-types";
+    let input = json!({"siteUrl": base, "email": "person@example.com", "apiToken": "jira-secret"});
+    for path in [connection, types] {
+        assert_eq!(
+            call(&app, Method::POST, path, input.clone(), "ingest-secret")
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let (status, info) = call(&app, Method::POST, connection, input.clone(), "read-secret").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(info["displayName"], "Test user");
+    assert_eq!(
+        info["projects"],
+        json!([{"value": "TEAM", "name": "Team project"}, {"value": "OTHER", "name": "Other project"}])
+    );
+    assert_eq!(remote.metadata_paths.lock().unwrap().len(), 3);
+    let mut request = input.clone();
+    request["projectKey"] = json!("TEAM");
+    let (status, info) = call(&app, Method::POST, types, request, "read-secret").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        info["issueTypes"],
+        json!([{"value": "10001", "name": "Bug"}])
+    );
+    assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(remote.ai_calls.load(Ordering::SeqCst), 0);
+    assert!(
+        crate::recipes::RecipeStore::new(config.config_dir)
+            .info()
+            .unwrap()
+            .settings
+            .is_none()
+    );
+
+    for (status, message) in [
+        (401, "credentials"),
+        (403, "permissions"),
+        (302, "redirect"),
+        (429, "rate limiting"),
+        (500, "http 500"),
+    ] {
+        remote.metadata_status.store(status, Ordering::SeqCst);
+        let (status, error) =
+            call(&app, Method::POST, connection, input.clone(), "read-secret").await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(
+            error["error"]
+                .as_str()
+                .unwrap()
+                .to_lowercase()
+                .contains(message)
+        );
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn jira_discovery_reuses_only_matching_saved_credentials_even_when_disabled() {
+    let temp = TempDir::new().unwrap();
+    let mut config = test_config(&temp);
+    let (base, remote, task) = mock_remote().await;
+    let store = crate::recipes::RecipeStore::new(config.config_dir.clone());
+    let mut saved = settings(&base, false, "review");
+    saved["enabled"] = json!(false);
+    store
+        .configure(
+            serde_json::from_value(json!({"settings": saved, "apiToken": "jira-secret"})).unwrap(),
+        )
+        .unwrap();
+    let app = crate::build_app(config.clone()).unwrap();
+    let path = "/v1/recipes/jira-issue/connection";
+    let input = json!({"siteUrl": format!("{base}/"), "email": "person@example.com"});
+    assert_eq!(
+        call(&app, Method::POST, path, input.clone(), "read-secret")
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let calls = remote.metadata_paths.lock().unwrap().len();
+    for bad in [
+        json!({"siteUrl": base, "email": "other@example.com"}),
+        json!({"siteUrl": "https://other.example", "email": "person@example.com"}),
+        json!({"siteUrl": format!("{base}/page"), "email": "person@example.com", "apiToken": "jira-secret"}),
+        json!({"siteUrl": "http://not-loopback.example", "email": "person@example.com", "apiToken": "jira-secret"}),
+        json!({"siteUrl": base, "email": "person@example.com", "apiToken": "bad\nheader"}),
+    ] {
+        assert_eq!(
+            call(&app, Method::POST, path, bad, "read-secret").await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/recipes/jira-issue/issue-types",
+            json!({"siteUrl": base, "email": "person@example.com", "projectKey": "../bad"}),
+            "read-secret"
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(remote.metadata_paths.lock().unwrap().len(), calls);
+    config.bind = "0.0.0.0:8787".to_owned();
+    let app = crate::build_app(config).unwrap();
+    for path in [path, "/v1/recipes/jira-issue/issue-types"] {
+        assert_eq!(
+            call(&app, Method::POST, path, input.clone(), "read-secret")
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    task.abort();
 }
 
 #[tokio::test]

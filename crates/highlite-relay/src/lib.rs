@@ -404,8 +404,21 @@ fn create_data_dirs(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-async fn ui_index() -> Html<&'static str> {
-    Html(include_str!("ui.html"))
+fn render_ui() -> String {
+    include_str!("ui.html")
+        .replace("/* highlite:theme */", include_str!("ui-theme.css"))
+        .replace(
+            "/* highlite:components */",
+            include_str!("ui-components.css"),
+        )
+        .replace(
+            "/* highlite:ui-components */",
+            include_str!("ui-components.js"),
+        )
+}
+
+async fn ui_index() -> Html<String> {
+    Html(render_ui())
 }
 
 async fn health() -> impl IntoResponse {
@@ -2719,6 +2732,12 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body.to_vec()).unwrap();
         assert!(html.contains("Highlite sessions"));
+        assert!(html.contains("--color-highlight-yellow: #efff3d"));
+        assert!(html.contains(".wizard-shell"));
+        assert!(html.contains(include_str!("ui-components.js").trim()));
+        assert!(!html.contains("/* highlite:theme */"));
+        assert!(!html.contains("/* highlite:components */"));
+        assert!(!html.contains("/* highlite:ui-components */"));
     }
 
     #[tokio::test]

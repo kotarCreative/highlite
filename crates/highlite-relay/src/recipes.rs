@@ -184,6 +184,22 @@ impl RecipeStore {
         self.token_with_mode(target, false)
     }
 
+    // Connection discovery must work before activation, without exposing the saved
+    // token or allowing it to be sent to a changed destination/account.
+    pub(crate) fn connection_token(&self, target: &JiraTarget) -> Result<String, String> {
+        self.access(false, |config| {
+            if !config.settings.as_ref().is_some_and(|settings| {
+                settings.jira.site_url == target.site_url && settings.jira.email == target.email
+            }) {
+                return Err("Enter a Jira API token for this site and account.".to_owned());
+            }
+            config
+                .api_token
+                .clone()
+                .ok_or_else(|| "Enter a Jira API token first.".to_owned())
+        })
+    }
+
     fn automatic_token_for(&self, target: &JiraTarget) -> Result<String, String> {
         self.token_with_mode(target, true)
     }
