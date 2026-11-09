@@ -1,0 +1,204 @@
+# Native macOS menu bar app
+
+`apps/macos` is a Swift Package Manager app that supervises a local Highlite relay and
+opens the relay's dashboard. It is a native loopback client, not a replacement for the
+relay or the browser SDK. SwiftUI/AppKit live in the executable target; Foundation,
+Security, and relay logic live in `HighliteMenuBarCore` so they can be tested without a
+window server.
+
+## Requirements
+
+- macOS 14 or newer on Apple silicon or Intel.
+- Xcode command line tools / Swift 5.9 or newer.
+- A Rust toolchain with Cargo.
+- The repository's existing development prerequisites for the relay.
+
+The app builds for the **native host architecture only**. It is not a universal binary.
+
+## Build, run, and verify
+
+```sh
+pnpm build:macos
+pnpm verify:macos
+open dist/Highlite.app
+```
+
+`pnpm build:macos` builds `highlite-relay` in release mode, builds the `HighliteMenuBar`
+product in release mode, and assembles:
+
+```text
+dist/Highlite.app/
+  Contents/
+    Info.plist
+    MacOS/HighliteMenuBar
+    Resources/highlite-relay
+```
+
+It assembles a temporary sibling bundle, clears extended attributes, lints the plist,
+checks the declared executable, and verifies that both binaries match the native host
+architecture. It signs the relay sidecar explicitly first, verifies it, then signs and
+verifies the app; it does not rely on `--deep` to discover nested code. Only after those
+checks does it swap the new bundle into `dist/Highlite.app`, keeping the previous bundle
+as a backup and restoring it if the final verification fails.
+
+The signatures are **ad-hoc** and the app is **not notarized**. There is no Developer ID
+signature, so Gatekeeper may require an explicit Open on first launch. Developer ID
+signing and notarization are follow-up work.
+
+`pnpm verify:macos` builds and tests the Swift package, rebuilds the bundle, lints the
+plist with `plutil`, checks `CFBundleExecutable`, requires executable main and sidecar
+files, verifies `lipo` architectures match the native host and each other, and verifies
+the sidecar and app signatures explicitly.
+
+On Linux, `pnpm verify:macos` performs static package checks only: required files,
+product/target names, plist values, and the absence of focused-window APIs. **A Linux
+pass is not proof that the app compiles or that Keychain, signing, or relay supervision
+work.** Run the script on macOS before shipping.
+
+## Relay lifecycle
+
+The app starts its own relay and can attach to an existing one only after the stored read
+token validates. Otherwise it reports a port/token conflict instead of taking over.
+
+Relay lookup order:
+
+1. `HIGHLITE_RELAY_BIN`
+2. bundled `Contents/Resources/highlite-relay`
+3. development `target/release/highlite-relay`
+
+The app generates 32-byte hex read and ingest tokens on first run. It writes:
+
+```text
+~/Library/Application Support/Highlite/
+  relay.env                 # mode 0600
+  config/                   # mode 0700, relay provider/Jira configuration
+  data/                     # compiled sessions and recipe runs
+```
+
+Startup uses `--env-file`, `--bind 127.0.0.1:<port>`, `--data-dir`, and `--config-dir`.
+It does not pass `--ui`, because the dashboard is part of the app's client flow. The
+initial relay environment allowlists the local demo development origin for browser
+ingest:
+
+```sh
+HIGHLITE_RELAY_ALLOWED_HOSTS=127.0.0.1:<port>
+HIGHLITE_RELAY_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+```
+
+Vite's default development origin is `http://localhost:5173`. Add the exact scheme,
+host, and port of any other browser host that uploads captures. Prefer HTTPS for
+non-local origins.
+
+The child environment omits `HIGHLITE_RELAY_*` and `HIGHLITE_CONFIG_DIR`, and augments
+`PATH` with common OpenCode locations. Relay logs are bounded and never include tokens
+or request bodies. An owned relay is stopped with **SIGINT**, matching the relay's
+`ctrl_c` handler. The app never kills a relay it did not start.
+
+## Credentials and storage
+
+- **Read and ingest relay tokens:** macOS Keychain is the app's token store. The active
+  values are also written into the relay env file because the child process needs them;
+  they are not stored in UserDefaults or other app preferences.
+- **Relay env file:** mode `0600`; configuration directory mode `0700`.
+- **AI provider credentials:** the relay's existing private plaintext
+  `<config-dir>/providers.json`. The app can edit them through the relay API but does
+  not read the file directly and does not claim Keychain protection for these keys.
+- **Jira credentials:** the relay's existing private plaintext
+  `<config-dir>/jira-recipe.json`. Same caveat.
+- **OpenCode authentication:** managed by the OpenCode CLI. The app and relay store no
+  OpenCode token.
+
+Provider saves are labelled **Saved, not verified**. Blank API-key fields are omitted
+rather than sent as empty strings. Jira token fields follow the same rule. Back up and
+protect the relay config and data directories; they can contain compiled capture text
+and generated drafts.
+
+## UI
+
+The menu bar shows relay status, a pending-suggestion badge, and actions to open the
+dashboard, start or stop the relay, and quit.
+
+The dashboard covers:
+
+- **Overview** and recent activity.
+- **Sessions** with compiled bundle access.
+- **Providers** — add, edit, make default, disconnect.
+- **Jira recipe** — connection test, project/issue-type selection, prompt, publish mode,
+  image opt-in, and extra fields JSON.
+- **OpenCode recipe** — required directory, discovery version and eligible sessions,
+  prompt, auto-draft, and enable/save.
+- **Settings** — relay and local path settings.
+
+Session detail exposes Jira draft/edit/publish and OpenCode suggestion/override/confirm.
+The interface explains that OpenCode routing is metadata-only and never auto-submits.
+
+## Pending suggestions
+
+The app polls activity (or recipe runs) for new OpenCode `suggested` runs and deduplicates
+by `sessionId + revision + updatedAtMs`. If the dashboard is open it selects the session
+and shows the review sheet; otherwise it activates the app and opens the real dashboard
+with the pending details.
+
+**Defer** leaves the run `suggested`; it remains in the relay and the badge stays. The
+confirmation sheet shows the target title, exact directory, and the stored
+`promptPreview`. Nothing is submitted without that confirmation. There is no
+focused-window detection: an unrelated OpenCode session in another window never becomes
+the target.
+
+## Package layout
+
+```text
+apps/macos/
+  Package.swift
+  Resources/Info.plist
+  Sources/
+    HighliteMenuBarCore/
+      RelayModels.swift
+      RelayClient.swift
+      RelayProcessController.swift
+      RelayEnvironment.swift
+      KeychainStore.swift
+      OpenCodeLocator.swift
+      AppSettings.swift
+      JSONValue.swift
+    HighliteMenuBar/
+      HighliteMenuBarApp.swift
+      AppDelegate.swift
+      AppModel.swift
+      Views/
+  Tests/HighliteMenuBarCoreTests/
+  README.md
+```
+
+`Package.swift` uses Swift tools 5.9, `.macOS(.v14)`, and the executable product
+`HighliteMenuBar`. The bundle identifier is `com.highlite.menubar`, it is an agent app
+(`LSUIElement`), and local networking is allowed for loopback relay traffic.
+
+## Manual verification
+
+After launching from `dist/Highlite.app`:
+
+1. The relay starts and the status indicator becomes reachable.
+2. Tokens exist only in Keychain, `relay.env` is `0600`, and the config directory is
+   `0700`.
+3. Provider and Jira setup can be saved and reports **Saved, not verified** where
+   applicable.
+4. Configure the OpenCode directory, run discovery, and confirm the version and eligible
+   sessions.
+5. Capture a session and let the recipe create a pending suggestion.
+6. Confirm that an unrelated OpenCode session in another window does not become the
+   target and nothing is sent before confirmation.
+7. Confirm the chosen session receives exactly the previewed prompt.
+8. Defer a suggestion, restart the app, and confirm the pending run persists.
+9. Inspect `/v1/activity` and confirm no prompt text, drafts, capture summaries, or
+   credentials appear.
+10. Quit the app and confirm the owned relay stops gracefully.
+
+## Limitations
+
+- macOS 14+ only; ad-hoc signed and not notarized.
+- No sandbox/App Store packaging in this slice.
+- Existing OpenCode sessions only; no creation of new sessions.
+- No exactly-once OpenCode delivery. Ambiguous submissions become `submit-unknown` and
+  must be checked manually.
+- The web relay UI stays Jira-only; OpenCode configuration lives in the native app.

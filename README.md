@@ -20,6 +20,9 @@ Requires Node.js 22 or newer, pnpm 12, and a Rust toolchain with Cargo. Install 
 - `pnpm test:compiler:e2e` — build the SDK and compiler, then compile a real browser capture through the Rust CLI
 - `pnpm test:providers` — exercise shared provider configuration through the CLI and relay UI in Chromium
 - `pnpm test:recipes` — exercise automatic Jira drafting, review, and publication against local fake AI/Jira endpoints
+- `pnpm test:opencode` — exercise OpenCode routing against a fake authenticated CLI, fake AI, and a real relay
+- `pnpm build:macos` — build the native menu bar app and bundled relay (macOS only)
+- `pnpm verify:macos` — statically check the app on Linux, or build, test, bundle, and verify it on macOS
 - `pnpm test:parakeet` — opt-in: run a real Parakeet transcription through `bundle` (see below)
 
 The compiler CLI reads a `CompileInput` JSON object on stdin:
@@ -188,6 +191,27 @@ compiled sessions with the default AI provider and prepares a Jira Cloud issue. 
 issues without a review step. Images are opt-in; Jira credentials are stored in the
 same private central config folder. See [the Jira recipe guide](docs/jira-recipe.md)
 for setup, data sharing, and failure handling.
+
+### Native macOS app and OpenCode routing
+
+`apps/macos` is a Swift Package Manager menu bar app that supervises the relay and opens
+its dashboard. It requires macOS 14+, Swift 5.9+, and Cargo. Build it with
+`pnpm build:macos`; `pnpm verify:macos` runs static package checks on Linux and the full
+Swift build/test plus bundle/signature verification on macOS. The bundle is ad-hoc
+signed, **not notarized**, and builds for the host architecture only.
+
+Relay read/ingest tokens are kept in Keychain, and the active values are written to the
+private `0600` relay env file the child process requires. AI provider and Jira
+credentials remain the relay's existing private plaintext config files, and OpenCode
+authentication stays with the OpenCode CLI. The initial relay environment allowlists the
+local demo origin (`http://localhost:5173`) for browser ingest. See
+[the macOS app guide](docs/macos-app.md) for lifecycle, credentials, and limitations.
+
+The `opencode` recipe routes fresh captures to existing OpenCode sessions. The relay
+ranks eligible sessions from bounded metadata, creates a pending suggestion, and sends
+nothing until you confirm the stored prompt preview. It never creates sessions and never
+auto-submits. See [the OpenCode recipe guide](docs/opencode-recipe.md). Exercise it with
+`pnpm test:opencode` (fake authenticated CLI, fake AI, real relay).
 
 Run `pnpm dev` and open the demo to try the analytics walkthrough. Its local preview shows the exact manifest and summary assembled by the SDK; it does not upload captures.
 
