@@ -1,0 +1,25 @@
+{
+  "managementEnabled": true,
+  "recipe": {
+    "id": "jira-issue",
+    "version": "1.1.0",
+    "settings": {
+      "enabled": true,
+      "autoDraft": true,
+      "publishMode": "review",
+      "includeImages": false,
+      "prompt": "Draft a careful issue.",
+      "jira": {
+        "siteUrl": "https://team.atlassian.net",
+        "email": "person@example.com",
+        "projectKey": "TEAM",
+        "issueTypeId": "10001",
+        "extraFields": {
+          "labels": ["highlite"],
+          "priority": { "id": "2" }
+        }
+      }
+    },
+    "hasApiToken": true
+  }
+}

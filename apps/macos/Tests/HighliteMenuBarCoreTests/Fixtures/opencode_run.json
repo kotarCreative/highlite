@@ -1,0 +1,61 @@
+{
+  "run": {
+    "sessionId": "hl-abc123",
+    "recipe": "opencode",
+    "recipeVersion": "1.0.0",
+    "status": "suggested",
+    "settings": {
+      "enabled": true,
+      "autoDraft": true,
+      "directory": "/Users/me/work/app",
+      "prompt": "Choose a session.",
+      "opencodePath": null,
+      "maxCandidates": 30
+    },
+    "provider": {
+      "id": "work",
+      "kind": "openai-compatible",
+      "model": "openai/gpt-5",
+      "baseUrl": "https://ai.example.com/v1",
+      "hasApiKey": true
+    },
+    "eligibleSessionIds": ["ses_abc", "ses_def"],
+    "candidates": [
+      {
+        "sessionId": "ses_abc",
+        "title": "Checkout bug",
+        "directory": "/Users/me/work/app",
+        "projectId": "prj_1",
+        "projectName": "app",
+        "createdAtMs": 1760000000000,
+        "updatedAtMs": 1760000100000
+      },
+      {
+        "sessionId": "ses_def",
+        "title": "Billing",
+        "directory": "/Users/me/work/app",
+        "projectId": "prj_1",
+        "projectName": "app",
+        "createdAtMs": 1759990000000,
+        "updatedAtMs": 1759991000000
+      }
+    ],
+    "suggestion": {
+      "sessionId": "ses_abc",
+      "title": "Checkout bug",
+      "directory": "/Users/me/work/app",
+      "projectName": "app",
+      "confidence": "high",
+      "reason": "Both mention the discount code."
+    },
+    "promptPreview": "Trusted instructions\n\nCapture summary:\nDiscount code fails.",
+    "messageId": null,
+    "opencodeSessionId": null,
+    "opencodeTitle": null,
+    "submittedAtMs": null,
+    "error": null,
+    "revision": 1,
+    "createdAtMs": 1760000000000,
+    "updatedAtMs": 1760000200000
+  }
+}

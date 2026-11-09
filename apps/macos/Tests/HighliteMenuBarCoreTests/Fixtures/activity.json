@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "recipe": "opencode",
+      "sessionId": "hl-abc123",
+      "status": "suggested",
+      "updatedAtMs": 1760000200000,
+      "title": "Checkout page",
+      "issueKey": null,
+      "issueUrl": null,
+      "opencodeSessionId": null,
+      "opencodeTitle": "Checkout bug",
+      "error": null
+    },
+    {
+      "recipe": "jira-issue",
+      "sessionId": "hl-abc123",
+      "status": "published",
+      "updatedAtMs": 1760000100000,
+      "title": "Checkout page",
+      "issueKey": "TEAM-123",
+      "issueUrl": "https://team.atlassian.net/browse/TEAM-123",
+      "opencodeSessionId": null,
+      "opencodeTitle": null,
+      "error": null
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "version": "2.0.32",
+  "pid": 4242,
+  "urls": ["http://127.0.0.1:4096"],
+  "paths": {
+    "tmp": "/tmp/opencode"
+  }
+}

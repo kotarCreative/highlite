@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "defaultProvider": "work",
+  "providers": [
+    {
+      "id": "work",
+      "kind": "openai-compatible",
+      "model": "openai/gpt-5",
+      "baseUrl": "https://ai.example.com/v1",
+      "hasApiKey": true
+    },
+    {
+      "id": "local",
+      "kind": "openai",
+      "model": "gpt-4.1",
+      "baseUrl": "",
+      "hasApiKey": false
+    }
+  ]
+}

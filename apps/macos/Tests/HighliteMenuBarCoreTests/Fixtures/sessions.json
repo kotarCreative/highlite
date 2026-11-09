@@ -1,0 +1,25 @@
+{
+  "sessions": [
+    {
+      "sessionId": "hl-abc123",
+      "status": "ready",
+      "receivedAtMs": 1760000000000,
+      "bytes": 123456,
+      "pageTitle": "Checkout page",
+      "pageUrl": "https://shop.example.com/checkout",
+      "durationMs": 42000,
+      "summary": "Customer cannot apply a discount code.",
+      "statusUrl": "/v1/sessions/hl-abc123",
+      "bundleUrl": "/v1/sessions/hl-abc123/bundle.zip"
+    },
+    {
+      "sessionId": "hl-failed",
+      "status": "failed",
+      "receivedAtMs": 1759990000000,
+      "bytes": 10,
+      "error": "Capture failed",
+      "statusUrl": "/v1/sessions/hl-failed",
+      "bundleUrl": "/v1/sessions/hl-failed/bundle.zip"
+    }
+  ]
+}
