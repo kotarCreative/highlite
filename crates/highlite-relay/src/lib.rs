@@ -45,8 +45,14 @@ use tokio::sync::Semaphore;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+mod activity;
 mod ai;
 mod jira;
+mod opencode;
+mod opencode_http;
+mod opencode_recipe;
+#[cfg(test)]
+mod opencode_tests;
 mod private_config;
 pub mod providers;
 mod recipe_http;
@@ -345,6 +351,7 @@ pub fn build_app(config: RelayConfig) -> Result<Router, String> {
     config.validate()?;
     create_data_dirs(&config.data_dir)?;
     recipes::RunStore::new(&config.data_dir).recover()?;
+    opencode_recipe::OpenCodeRunStore::recover(&config.data_dir);
     let pipelines = load_pipelines(&config)?;
     if config.allow_pipelines {
         eprintln!(
@@ -362,6 +369,8 @@ pub fn build_app(config: RelayConfig) -> Result<Router, String> {
 
     let api = Router::new()
         .merge(recipe_http::routes())
+        .merge(opencode_http::routes())
+        .merge(activity::routes())
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers/{id}", post(connect_provider))
         .route("/v1/providers/{id}/default", post(default_provider))
@@ -741,6 +750,11 @@ async fn ingest_session(State(state): State<AppState>, request: Request) -> Resp
                 recipes::start(state.clone(), metadata.session_id.clone(), true).await
             {
                 eprintln!("could not queue automatic Jira draft: {error}");
+            }
+            if let Err(error) =
+                opencode_recipe::start(state.clone(), metadata.session_id.clone(), true).await
+            {
+                eprintln!("could not queue automatic OpenCode suggestion: {error}");
             }
             let location = metadata.status_url.clone();
             let mut response = (StatusCode::CREATED, Json(metadata)).into_response();
