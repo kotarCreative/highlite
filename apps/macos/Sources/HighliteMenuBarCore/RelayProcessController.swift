@@ -410,8 +410,9 @@ public final class RelaySupervisor: ObservableObject {
         child.standardError = stderrPipe
         child.standardInput = FileHandle.nullDevice
         child.terminationHandler = { [weak self] finished in
+            guard let self else { return }
             Task { @MainActor in
-                self?.handleTermination(finished)
+                self.handleTermination(finished)
             }
         }
 
@@ -609,8 +610,9 @@ public final class RelaySupervisor: ObservableObject {
             let data = handle.availableData
             guard !data.isEmpty else { return }
             let text = String(decoding: data, as: UTF8.self)
+            guard let self else { return }
             Task { @MainActor in
-                self?.appendLog(text)
+                self.appendLog(text)
             }
         }
     }
