@@ -188,15 +188,24 @@ async fn upload(app: &Router, session: &str) -> StatusCode {
 }
 
 async fn wait_for(app: &Router, path: &str, status: &str) -> Value {
+    wait_for_matching(app, path, status, |run| run["status"] == status).await
+}
+
+async fn wait_for_matching(
+    app: &Router,
+    path: &str,
+    expected: &str,
+    matches: impl Fn(&Value) -> bool,
+) -> Value {
     for _ in 0..200 {
         let (code, response) = call(app, Method::GET, path, Value::Null, "read-secret").await;
         assert_eq!(code, StatusCode::OK);
-        if response["run"]["status"] == status {
+        if matches(&response["run"]) {
             return response["run"].clone();
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    panic!("recipe did not reach {status}");
+    panic!("recipe did not reach {expected}");
 }
 
 fn provider(root: &std::path::Path, base: &str) {
@@ -470,7 +479,12 @@ async fn automatic_mode_publishes_without_review_and_keeps_rejections_actionable
     remote.jira_status.store(400, Ordering::SeqCst);
     assert_eq!(upload(&app, "auto-rejected").await, StatusCode::CREATED);
     let rejected_path = "/v1/sessions/auto-rejected/recipes/jira-issue";
-    let rejected = wait_for(&app, rejected_path, "draft").await;
+    // Automatic publication also passes through an initial draft without an error.
+    // Wait for the rejection result, not that transient pre-publication state.
+    let rejected = wait_for_matching(&app, rejected_path, "rejected draft", |run| {
+        run["status"] == "draft" && run["error"].is_string()
+    })
+    .await;
     assert_eq!(rejected["draft"]["summary"], "Captured defect");
     assert!(rejected["error"].as_str().unwrap().contains("HTTP 400"));
     assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 2);
