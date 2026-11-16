@@ -19,6 +19,10 @@ highlite-compiler scrawl  [--pretty] < input.json > scrawl.json
 
 # Full agent bundle from a capture directory (manifest.json + media).
 highlite-compiler bundle <capture-dir> --out <bundle-dir>
+
+# Audio-only adapter: transcript JSON on stdout, diagnostics on stderr.
+highlite-compiler transcribe <audio-file> --transcribe parakeet \
+  --parakeet-model /path/to/model.gguf
 ```
 
 `input.json` is a `CompileInput`:
@@ -126,6 +130,12 @@ Generic command output (a bare array is also accepted):
 `words` (alias `wordTimings`) is optional. Timings are relative to the audio file; the
 compiler shifts them by `manifest.audioOffsetMs` and clips them to `manifest.durationMs`.
 Transcripts already present in the manifest are assumed to be on the session clock.
+
+The `transcribe` subcommand accepts the same transcription options as `bundle`,
+without `--out` or rendering options. It prints a bare segment array with
+audio-relative millisecond timings and `wordTimings`, suitable for the relay's
+generic command adapter. Empty output arrays represent silence. It does not
+compile frames or apply a session offset; the relay handles those steps.
 
 ## Library
 

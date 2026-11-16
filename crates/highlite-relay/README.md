@@ -438,6 +438,24 @@ server side; the browser does not need it.
 The relay does not transcribe narration by default. Set `HIGHLITE_RELAY_TRANSCRIBER_COMMAND` (or
 `HIGHLITE_ASR_COMMAND`) to run an ASR command that prints transcript JSON on stdout, for
 example the same command accepted by `highlite-compiler bundle --transcribe command`.
+
+To reuse the compiler's local Parakeet backend instead of writing an ASR wrapper:
+
+```dotenv
+HIGHLITE_RELAY_TRANSCRIBER_COMMAND=/absolute/path/highlite-compiler transcribe --transcribe parakeet --parakeet /absolute/path/parakeet-cli --parakeet-model /absolute/path/model.gguf
+```
+
+Build the compiler with `cargo build --release -p highlite-compiler`, and ensure
+`ffmpeg` is on the relay's `PATH` (or set `HIGHLITE_FFMPEG` in its process
+environment). The command is split on whitespace, not evaluated by a shell:
+use paths without spaces, or a wrapper script in a path without spaces that
+quotes its internal paths. The relay appends the audio path as a single argument
+and applies `audioOffsetMs` to the returned timings. Restart the relay after
+changing its env file. Existing sessions are not automatically reprocessed.
+
+For the macOS app, edit `~/Library/Application Support/Highlite/relay.env`;
+the app preserves this setting when saving its own settings. The current app
+bundle does not install the transcription engine, model, or compiler adapter.
 Without it, the bundle keeps the audio and records a warning that narration was not
 transcribed.
 

@@ -78,3 +78,84 @@ fn reports_a_missing_viewport_for_scrawl_export() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("viewport"));
 }
+
+#[cfg(unix)]
+#[test]
+fn transcribes_audio_to_json_for_the_relay_command_adapter() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let audio = temp.path().join("narration with spaces.webm");
+    std::fs::write(&audio, b"fake audio").unwrap();
+    let script = temp.path().join("asr.sh");
+    std::fs::write(
+        &script,
+        r#"test -f "$1" || exit 1
+printf '%s\n' '[{"startMs":100,"endMs":900,"text":"Look here","words":[{"startMs":100,"endMs":900,"text":"Look"}]}]'
+"#,
+    )
+    .unwrap();
+    let command = format!("/bin/sh {}", script.display());
+    let output = run(
+        &[
+            "transcribe",
+            "--transcribe",
+            "command",
+            "--transcriber-command",
+            &command,
+            audio.to_str().unwrap(),
+        ],
+        "",
+    );
+    let transcript = stdout_json(&output);
+    assert_eq!(transcript[0]["text"], "Look here");
+    assert_eq!(transcript[0]["startMs"], 100);
+    assert_eq!(transcript[0]["wordTimings"][0]["startMs"], 100);
+    let parsed =
+        highlite_compiler::parse_transcript_json(std::str::from_utf8(&output.stdout).unwrap())
+            .unwrap();
+    assert_eq!(parsed[0].word_timings[0].text, "Look");
+}
+
+#[test]
+fn rejects_invalid_transcribe_arguments() {
+    for args in [
+        vec!["transcribe"],
+        vec!["transcribe", "--transcribe", "off", "audio.webm"],
+        vec!["transcribe", "audio.webm", "other.webm"],
+        vec!["transcribe", "--parakeet-model"],
+        vec!["transcribe", "--out", "bundle"],
+        vec!["transcribe", "/nonexistent/highlite-audio.webm"],
+    ] {
+        let output = run(&args, "");
+        assert!(!output.status.success(), "expected failure for {args:?}");
+        assert!(
+            output.stdout.is_empty(),
+            "errors must not corrupt JSON stdout"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn preserves_silence_and_reports_transcription_failures_on_stderr() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let audio = temp.path().join("audio.webm");
+    std::fs::write(&audio, b"fake audio").unwrap();
+    let script = temp.path().join("asr.sh");
+    let command = format!("/bin/sh {}", script.display());
+    let args = [
+        "transcribe",
+        audio.to_str().unwrap(),
+        "--transcribe",
+        "command",
+        "--transcriber-command",
+        &command,
+    ];
+    std::fs::write(&script, "printf '[]\\n'\n").unwrap();
+    assert_eq!(stdout_json(&run(&args, "")), serde_json::json!([]));
+
+    std::fs::write(&script, "echo 'ASR failed' >&2\nexit 1\n").unwrap();
+    let output = run(&args, "");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("ASR failed"));
+}

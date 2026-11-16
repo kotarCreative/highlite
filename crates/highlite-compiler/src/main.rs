@@ -18,8 +18,10 @@ Usage:
   highlite-compiler compile [--pretty] < input.json > bundle.json
   highlite-compiler scrawl  [--pretty] < input.json > scrawl.json
   highlite-compiler bundle <capture-dir> --out <bundle-dir> [options]
+  highlite-compiler transcribe <audio-file> [transcription options]
 
 Input for compile/scrawl is a CompileInput object. Output is JSON on stdout.
+Transcribe prints a transcript segment array with audio-relative timings on stdout.
 
 Bundle options:
   --out <dir>                 required; where summary.md, frames/, and JSON go
@@ -210,6 +212,60 @@ fn load_input(capture: &Path, args: &BundleArgs) -> Result<CompileInput, Box<dyn
     Ok(input)
 }
 
+fn parse_transcribe_args(args: &[String]) -> Result<BundleArgs, String> {
+    let mut parsed = BundleArgs::default();
+    let mut audio = None;
+    let mut index = 0;
+    while index < args.len() {
+        let argument = args[index].as_str();
+        match argument {
+            "--transcribe" => {
+                parsed.transcribe =
+                    TranscribeMode::parse(&value_for(args, &mut index, "--transcribe")?)?;
+                if matches!(parsed.transcribe, TranscribeMode::Off) {
+                    return Err("transcribe cannot use --transcribe off".to_owned());
+                }
+            }
+            "--transcriber-command" => {
+                parsed.transcriber_command =
+                    Some(value_for(args, &mut index, "--transcriber-command")?)
+            }
+            "--model" => parsed.model = Some(value_for(args, &mut index, "--model")?.into()),
+            "--whisper" => parsed.whisper = Some(value_for(args, &mut index, "--whisper")?.into()),
+            "--parakeet-model" => {
+                parsed.parakeet_model =
+                    Some(value_for(args, &mut index, "--parakeet-model")?.into())
+            }
+            "--parakeet" => {
+                parsed.parakeet = Some(value_for(args, &mut index, "--parakeet")?.into())
+            }
+            "--language" => parsed.language = Some(value_for(args, &mut index, "--language")?),
+            flag if flag.starts_with('-') => return Err(format!("unknown option: {flag}")),
+            _ if audio.is_none() => audio = Some(PathBuf::from(argument)),
+            _ => return Err("transcribe accepts exactly one audio file".to_owned()),
+        }
+        index += 1;
+    }
+    parsed.capture = audio.ok_or("transcribe needs an audio file")?;
+    Ok(parsed)
+}
+
+fn run_transcribe(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let parsed = parse_transcribe_args(args)?;
+    if !parsed.capture.is_file() {
+        return Err(format!("{} is not an audio file.", parsed.capture.display()).into());
+    }
+    let transcriber = transcriber_for(&parsed)?;
+    let segments = transcriber.transcribe(&TranscriptionRequest {
+        audio_path: &parsed.capture,
+        language: parsed.language.as_deref(),
+    })?;
+    let mut stdout = io::stdout().lock();
+    serde_json::to_writer(&mut stdout, &segments)?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
 fn transcriber_for(args: &BundleArgs) -> Result<Box<dyn Transcriber>, Box<dyn Error>> {
     let command = args
         .transcriber_command
@@ -370,6 +426,9 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     if command == "bundle" {
         return run_bundle(&args[command_index.expect("bundle is present") + 1..]);
+    }
+    if command == "transcribe" {
+        return run_transcribe(&args[command_index.expect("transcribe is present") + 1..]);
     }
 
     if !matches!(command, "compile" | "scrawl") {
