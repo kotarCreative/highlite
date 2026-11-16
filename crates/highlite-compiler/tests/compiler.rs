@@ -327,6 +327,7 @@ fn a_strong_spoken_cue_promotes_a_nearby_frame() {
         annotation_ids: Vec::new(),
         transcript_segment_ids: Vec::new(),
         reason: highlite_compiler::KeyframeReason::Interaction,
+        event_ids: Vec::new(),
     }];
     request.options = Some(CompileOptions {
         max_keyframes: Some(1),

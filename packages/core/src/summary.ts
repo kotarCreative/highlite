@@ -9,12 +9,16 @@ function markdownText(value: string): string {
   return value.replace(/[\\`*_{}[\]()#+.!|>]/g, '\\$&').replace(/[\r\n]+/g, ' ');
 }
 
-function targetDescription(manifest: HighliteManifest, targetId?: string): string | undefined {
+function targetLabel(manifest: HighliteManifest, targetId?: string): string | undefined {
   if (!targetId) return undefined;
   const target = manifest.targets.find((candidate) => candidate.id === targetId);
   if (!target) return undefined;
-  const label = target.label ?? target.textExcerpt ?? target.selector ?? target.tag ?? target.id;
-  return `Target: ${markdownText(label)}${target.metadata?.id ? ` (id: ${markdownText(String(target.metadata.id))})` : ''}`;
+  return target.label ?? target.textExcerpt ?? target.selector ?? target.tag ?? target.id;
+}
+
+function targetDescription(manifest: HighliteManifest, targetId?: string): string | undefined {
+  const label = targetLabel(manifest, targetId);
+  return label ? `Target: ${markdownText(label)}` : undefined;
 }
 
 function frameHeading(manifest: HighliteManifest, frame: Keyframe): string {
@@ -36,6 +40,11 @@ function frameHeading(manifest: HighliteManifest, frame: Keyframe): string {
   return markdownText(target?.label ?? target?.textExcerpt ?? frame.reason);
 }
 
+function quotedValue(event: TimelineEvent): string | undefined {
+  if (event.payload.valueCaptured !== true) return undefined;
+  return typeof event.payload.value === 'string' ? markdownText(event.payload.value) : undefined;
+}
+
 function eventDescription(manifest: HighliteManifest, event: TimelineEvent): string {
   if (event.kind === 'mark' && typeof event.payload.label === 'string') {
     return `Mark: ${markdownText(event.payload.label)}`;
@@ -43,8 +52,12 @@ function eventDescription(manifest: HighliteManifest, event: TimelineEvent): str
   if (event.kind === 'context') {
     return `Context: ${markdownText(String(event.payload.scope ?? 'page'))} — ${markdownText(String(event.payload.value ?? ''))}`;
   }
-  const target = targetDescription(manifest, event.targetId);
-  if (event.kind === 'click') return target ? `Click — ${target.replace('Target: ', '')}` : 'Click';
+  const label = targetLabel(manifest, event.targetId);
+  if (event.kind === 'click') {
+    const target = manifest.targets.find((candidate) => candidate.id === event.targetId);
+    const role = target?.role ?? 'element';
+    return label ? `Clicked ${role} “${markdownText(label)}”` : `Clicked ${role}`;
+  }
   if (event.kind === 'scroll') {
     return `Scroll to x=${String(event.payload.x ?? 0)}, y=${String(event.payload.y ?? 0)}`;
   }
@@ -52,9 +65,54 @@ function eventDescription(manifest: HighliteManifest, event: TimelineEvent): str
     return `Navigate to ${markdownText(String(event.payload.to ?? 'unknown route'))}`;
   }
   if (event.kind === 'annotation') {
-    return `Added ${markdownText(String(event.payload.annotationKind ?? ''))} annotation${target ? ` — ${target.replace('Target: ', '')}` : ''}`;
+    return `Added ${markdownText(String(event.payload.annotationKind ?? ''))} annotation${label ? ` — ${markdownText(label)}` : ''}`;
   }
-  return target ? `${event.kind} — ${target.replace('Target: ', '')}` : event.kind;
+  if (event.kind === 'input') {
+    const name = label ? ` — ${markdownText(label)}` : '';
+    if (event.payload.filled === false) return `Cleared field${name}`;
+    const value = quotedValue(event);
+    return value !== undefined
+      ? `Entered “${value}” in field${name}`
+      : `Entered text in field${name}`;
+  }
+  if (event.kind === 'change') {
+    if (event.payload.fieldKind === 'checkbox' || event.payload.fieldKind === 'radio') {
+      const action = event.payload.checked === true ? 'Checked' : 'Unchecked';
+      return label ? `${action} “${markdownText(label)}”` : action;
+    }
+    const field = label ? ` in ${markdownText(label)}` : '';
+    if (event.payload.valueCaptured === true && Array.isArray(event.payload.optionLabels)) {
+      const options = event.payload.optionLabels
+        .filter((option): option is string => typeof option === 'string' && option.length > 0)
+        .map((option) => `“${markdownText(option)}”`);
+      if (options.length > 0) return `Selected ${options.join(', ')}${field}`;
+      return label ? `Cleared selection in ${markdownText(label)}` : 'Cleared selection';
+    }
+    const option =
+      event.payload.valueCaptured === true && typeof event.payload.optionLabel === 'string'
+        ? markdownText(event.payload.optionLabel)
+        : undefined;
+    if (option !== undefined) return `Selected “${option}”${field}`;
+    return label ? `Changed selection — ${markdownText(label)}` : 'Changed selection';
+  }
+  if (event.kind === 'submit') {
+    const form = label ? `form “${markdownText(label)}”` : 'form';
+    const submitter =
+      typeof event.payload.submitterLabel === 'string'
+        ? ` via “${markdownText(event.payload.submitterLabel)}”`
+        : '';
+    return `Submitted ${form}${submitter}`;
+  }
+  return label ? `${event.kind} — ${markdownText(label)}` : event.kind;
+}
+
+function isEnvironmentEvent(event: TimelineEvent): boolean {
+  return (
+    event.kind === 'context' &&
+    (event.payload.scope === 'environment' ||
+      event.payload.scope === 'app' ||
+      event.payload.scope === 'app.version')
+  );
 }
 
 export function buildSummary(manifest: HighliteManifest): string {
@@ -64,8 +122,18 @@ export function buildSummary(manifest: HighliteManifest): string {
     '# Captured web interaction',
     `Page: ${pathname}${manifest.page.title ? ` — ${markdownText(manifest.page.title)}` : ''}`,
     `Duration: ${formatTime(manifest.durationMs)}`,
-    '',
   ];
+
+  const environment = manifest.timeline.filter(isEnvironmentEvent);
+  if (environment.length > 0) {
+    lines.push(
+      `Environment: ${environment
+        .map((event) => markdownText(String(event.payload.value ?? '')))
+        .filter(Boolean)
+        .join(' · ')}`,
+    );
+  }
+  lines.push('');
 
   if (manifest.keyframes.length > 0) {
     lines.push('## Keyframes', '');
@@ -83,11 +151,14 @@ export function buildSummary(manifest: HighliteManifest): string {
     lines.push('Visual evidence: unavailable. No approved frame provider supplied image data.', '');
   }
 
+  const actions = manifest.timeline.filter(
+    (event) => event.kind !== 'target' && !isEnvironmentEvent(event),
+  );
   lines.push('## Timeline', '');
-  for (const event of manifest.timeline) {
+  for (const event of actions) {
     lines.push(`- ${formatTime(event.atMs)} — ${eventDescription(manifest, event)}`);
   }
-  if (manifest.timeline.length === 0) lines.push('- No browser interactions were captured.');
+  if (actions.length === 0) lines.push('- No browser interactions were captured.');
 
   lines.push('', '## Narration', '');
   if (manifest.transcript.length > 0) {

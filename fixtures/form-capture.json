@@ -1,0 +1,254 @@
+{
+  "manifest": {
+    "schemaVersion": "0.1.0",
+    "sessionId": "session-form-1",
+    "createdAt": "2026-10-21T09:00:00.000Z",
+    "page": {
+      "initialUrl": "https://app.example.com/search",
+      "title": "Search"
+    },
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "width": 1440,
+      "height": 1000
+    },
+    "durationMs": 30000,
+    "timeline": [
+      {
+        "id": "event-environment",
+        "seq": 0,
+        "atMs": 0,
+        "kind": "context",
+        "payload": {
+          "scope": "environment",
+          "value": "Chrome 141 · Linux · viewport 1440×1000"
+        }
+      },
+      {
+        "id": "event-app-version",
+        "seq": 1,
+        "atMs": 20,
+        "kind": "context",
+        "payload": {
+          "scope": "app.version",
+          "value": "1.4.2"
+        }
+      },
+      {
+        "id": "event-target",
+        "seq": 2,
+        "atMs": 900,
+        "kind": "target",
+        "targetId": "t-button",
+        "payload": {
+          "role": "button",
+          "tag": "button"
+        }
+      },
+      {
+        "id": "event-click",
+        "seq": 3,
+        "atMs": 1000,
+        "kind": "click",
+        "targetId": "t-button",
+        "payload": {
+          "button": 0,
+          "x": 300,
+          "y": 120
+        }
+      },
+      {
+        "id": "event-input",
+        "seq": 4,
+        "atMs": 2200,
+        "kind": "input",
+        "targetId": "t-input",
+        "payload": {
+          "fieldKind": "text",
+          "fieldType": "search",
+          "filled": true,
+          "valueCaptured": true,
+          "value": "retention"
+        }
+      },
+      {
+        "id": "event-select",
+        "seq": 5,
+        "atMs": 3500,
+        "kind": "change",
+        "targetId": "t-select",
+        "payload": {
+          "fieldKind": "select",
+          "fieldType": "select",
+          "valueCaptured": true,
+          "value": "30",
+          "optionLabel": "Last 30 days"
+        }
+      },
+      {
+        "id": "event-multi",
+        "seq": 6,
+        "atMs": 3900,
+        "kind": "change",
+        "targetId": "t-multi",
+        "payload": {
+          "fieldKind": "select",
+          "fieldType": "select",
+          "valueCaptured": true,
+          "optionLabels": ["Retention", "Churn"]
+        }
+      },
+      {
+        "id": "event-check",
+        "seq": 7,
+        "atMs": 4200,
+        "kind": "change",
+        "targetId": "t-checkbox",
+        "payload": {
+          "fieldKind": "checkbox",
+          "fieldType": "checkbox",
+          "checked": true,
+          "valueCaptured": false
+        }
+      },
+      {
+        "id": "event-submit",
+        "seq": 8,
+        "atMs": 5000,
+        "kind": "submit",
+        "targetId": "t-form",
+        "payload": {
+          "method": "get",
+          "action": "https://app.example.com/search?token=must-not-leak",
+          "submitterLabel": "Apply filters"
+        }
+      }
+    ],
+    "targets": [
+      {
+        "id": "t-button",
+        "tag": "button",
+        "role": "button",
+        "label": "Advanced filters",
+        "selector": "#advanced-filters",
+        "rect": {
+          "x": 280,
+          "y": 100,
+          "width": 140,
+          "height": 40
+        },
+        "pageUrl": "https://app.example.com/search"
+      },
+      {
+        "id": "t-input",
+        "tag": "input",
+        "role": "textbox",
+        "label": "Search metrics",
+        "selector": "#metric-search",
+        "rect": {
+          "x": 100,
+          "y": 200,
+          "width": 320,
+          "height": 40
+        },
+        "pageUrl": "https://app.example.com/search"
+      },
+      {
+        "id": "t-select",
+        "tag": "select",
+        "role": "combobox",
+        "label": "Date range",
+        "selector": "#date-range",
+        "rect": {
+          "x": 440,
+          "y": 200,
+          "width": 180,
+          "height": 40
+        },
+        "pageUrl": "https://app.example.com/search"
+      },
+      {
+        "id": "t-multi",
+        "tag": "select",
+        "role": "listbox",
+        "label": "Categories",
+        "selector": "#categories",
+        "rect": {
+          "x": 640,
+          "y": 200,
+          "width": 180,
+          "height": 80
+        },
+        "pageUrl": "https://app.example.com/search"
+      },
+      {
+        "id": "t-checkbox",
+        "tag": "input",
+        "role": "checkbox",
+        "label": "Include archived",
+        "selector": "#include-archived",
+        "rect": {
+          "x": 100,
+          "y": 260,
+          "width": 20,
+          "height": 20
+        },
+        "pageUrl": "https://app.example.com/search"
+      },
+      {
+        "id": "t-form",
+        "tag": "form",
+        "role": "form",
+        "label": "Search filters",
+        "selector": "#filters",
+        "rect": {
+          "x": 80,
+          "y": 80,
+          "width": 620,
+          "height": 240
+        },
+        "pageUrl": "https://app.example.com/search"
+      }
+    ],
+    "annotations": [],
+    "transcript": [
+      {
+        "id": "fs1",
+        "startMs": 2000,
+        "endMs": 4000,
+        "text": "I search for retention and pick the last 30 days."
+      }
+    ],
+    "keyframes": [
+      {
+        "id": "f-click",
+        "atMs": 1050,
+        "imagePath": "frames/f-click.png",
+        "targetIds": ["t-button"],
+        "annotationIds": [],
+        "transcriptSegmentIds": [],
+        "reason": "interaction",
+        "eventIds": ["event-click"]
+      },
+      {
+        "id": "f-submit",
+        "atMs": 5050,
+        "imagePath": "frames/f-submit.png",
+        "targetIds": ["t-form"],
+        "annotationIds": [],
+        "transcriptSegmentIds": [],
+        "reason": "interaction",
+        "eventIds": ["event-submit"]
+      }
+    ],
+    "artifacts": {},
+    "captureWarnings": []
+  },
+  "viewport": {
+    "x": 0,
+    "y": 0,
+    "width": 1440,
+    "height": 1000
+  }
+}

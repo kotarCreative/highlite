@@ -3,8 +3,8 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 use crate::model::{
-    Annotation, CompiledKeyframe, DocsRef, HighliteManifest, Target, TimelineEvent, TimelineKind,
-    TranscriptSegment,
+    Annotation, CaptureReport, CompiledKeyframe, DocsRef, FrameMatch, HighliteManifest,
+    ReportAction, Target, TimelineEvent, TimelineKind, TranscriptSegment,
 };
 
 fn format_clock(ms: u64) -> String {
@@ -65,6 +65,17 @@ fn nearest_event(
     }
 }
 
+fn event_for_frame<'a>(
+    frame: &CompiledKeyframe,
+    manifest: &'a HighliteManifest,
+) -> Option<&'a TimelineEvent> {
+    frame
+        .event_ids
+        .iter()
+        .find_map(|id| manifest.timeline.iter().find(|event| &event.id == id))
+        .or_else(|| nearest_event(&manifest.timeline, frame.at_ms, 1_500))
+}
+
 fn describe_frame(frame: &CompiledKeyframe, manifest: &HighliteManifest) -> String {
     let target: Option<&Target> = frame
         .target_ids
@@ -80,7 +91,7 @@ fn describe_frame(frame: &CompiledKeyframe, manifest: &HighliteManifest) -> Stri
                 .find(|annotation| &annotation.id == id)
         })
         .min_by_key(|annotation| annotation.at_ms.abs_diff(frame.at_ms));
-    let event = nearest_event(&manifest.timeline, frame.at_ms, 1_500);
+    let event = event_for_frame(frame, manifest);
     let label =
         target.and_then(|target| target.label.clone().or_else(|| target.text_excerpt.clone()));
 
@@ -125,6 +136,18 @@ fn describe_frame(frame: &CompiledKeyframe, manifest: &HighliteManifest) -> Stri
                     None => prefix,
                 }
             }
+            Some(TimelineKind::Input) => match label {
+                Some(text) => format!("entered text in {}", quote(&text)),
+                None => "entered text".to_owned(),
+            },
+            Some(TimelineKind::Change) => match label {
+                Some(text) => format!("changed form field {}", quote(&text)),
+                None => "changed a form field".to_owned(),
+            },
+            Some(TimelineKind::Submit) => match label {
+                Some(text) => format!("submitted form {}", quote(&text)),
+                None => "submitted a form".to_owned(),
+            },
             _ => match label {
                 Some(text) => format!("interacted with {}", quote(&text)),
                 None => "interacted".to_owned(),
@@ -141,12 +164,63 @@ fn docs_for_frame<'a>(frame: &CompiledKeyframe, docs_refs: &'a [DocsRef]) -> Opt
     })
 }
 
+fn frame_reference(action: &ReportAction, keyframes: &[CompiledKeyframe]) -> String {
+    if action.evidence.keyframe_ids.is_empty() {
+        return String::new();
+    }
+    let indexes: Vec<String> = action
+        .evidence
+        .keyframe_ids
+        .iter()
+        .filter_map(|id| {
+            keyframes
+                .iter()
+                .find(|keyframe| &keyframe.id == id)
+                .map(|keyframe| format!("#{}", keyframe.index))
+        })
+        .collect();
+    if indexes.is_empty() {
+        return String::new();
+    }
+    let noun = if indexes.len() == 1 {
+        "frame"
+    } else {
+        "frames"
+    };
+    let match_note = match action.evidence.frame_match {
+        FrameMatch::Exact => "exact",
+        FrameMatch::Temporal => "temporal",
+        FrameMatch::None => "unlinked",
+    };
+    format!(" · {noun} {} ({match_note})", indexes.join(", "))
+}
+
+fn environment_line(report: &CaptureReport) -> Option<String> {
+    let values: Vec<String> = report
+        .environment
+        .iter()
+        .filter_map(|entry| {
+            let value = plain_text(&entry.value);
+            if value.is_empty() {
+                return None;
+            }
+            Some(if entry.scope == "environment" {
+                value
+            } else {
+                format!("{} {value}", entry.scope)
+            })
+        })
+        .collect();
+    (!values.is_empty()).then(|| values.join(" · "))
+}
+
 pub fn build_handoff_summary(
     manifest: &HighliteManifest,
     keyframes: &[CompiledKeyframe],
     transcript: &[TranscriptSegment],
     docs_refs: &[DocsRef],
     warnings: &[String],
+    report: &CaptureReport,
 ) -> String {
     let title = if manifest.page.title.is_empty() {
         String::new()
@@ -163,22 +237,38 @@ pub fn build_handoff_summary(
         manifest.session_id
     );
     let _ = writeln!(out, "Page: {}", manifest.page.initial_url);
+    if let Some(environment) = environment_line(report) {
+        let _ = writeln!(out, "Environment: {environment}");
+    }
 
-    if keyframes.is_empty() {
-        out.push('\n');
-        out.push_str("Visual evidence: unavailable. No keyframes were selected.\n");
-        if !transcript.is_empty() {
-            out.push('\n');
-            out.push_str("## Narration\n\n");
-            for segment in transcript {
-                let _ = writeln!(
-                    out,
-                    "- {} — {}",
-                    format_clock(segment.start_ms),
-                    quote(&segment.text)
-                );
-            }
+    out.push_str("\n## Actions\n\n");
+    if report.actions.is_empty() {
+        out.push_str("No user-facing actions were captured.\n");
+    } else {
+        out.push_str(
+            "Observed actions in capture order. Frame links marked exact use capture-time references; transcript links are approximate.\n\n",
+        );
+        for action in &report.actions {
+            let said = action
+                .evidence
+                .said
+                .as_ref()
+                .map(|said| format!(" · {}", quote(said)))
+                .unwrap_or_default();
+            let _ = writeln!(
+                out,
+                "- {} — {}{}{}",
+                format_clock(action.at_ms),
+                plain_text(&action.action),
+                frame_reference(action, keyframes),
+                said
+            );
         }
+    }
+
+    out.push_str("\n## Visual evidence\n\n");
+    if keyframes.is_empty() {
+        out.push_str("Visual evidence: unavailable. No keyframes were selected.\n");
     } else {
         for frame in keyframes {
             let action = describe_frame(frame, manifest);
@@ -194,14 +284,10 @@ pub fn build_handoff_summary(
                 .unwrap_or_default();
             let _ = writeln!(
                 out,
-                "- #{} ({}){}{}{}",
+                "- #{} ({}) [{}]{}{}",
                 frame.index,
                 format_clock(frame.at_ms),
-                if action.is_empty() {
-                    String::new()
-                } else {
-                    format!(" [{action}]")
-                },
+                action,
                 said,
                 cue
             );
@@ -214,14 +300,36 @@ pub fn build_handoff_summary(
         }
     }
 
+    out.push_str("\n## Narration\n\n");
     if transcript.is_empty() {
-        out.push('\n');
         out.push_str("Narration: no transcript was supplied.\n");
+    } else {
+        for segment in transcript {
+            let _ = writeln!(
+                out,
+                "- {} — {}",
+                format_clock(segment.start_ms),
+                quote(&segment.text)
+            );
+        }
+    }
+
+    if !report.context.is_empty() {
+        out.push_str("\n## Context\n\n");
+        for entry in &report.context {
+            let _ = writeln!(out, "- {} — {}", entry.scope, plain_text(&entry.value));
+        }
+    }
+
+    if !report.notes.is_empty() {
+        out.push_str("\n## Report notes\n\n");
+        for note in &report.notes {
+            let _ = writeln!(out, "- {}", plain_text(note));
+        }
     }
 
     if !warnings.is_empty() {
-        out.push('\n');
-        out.push_str("## Capture limitations\n\n");
+        out.push_str("\n## Capture limitations\n\n");
         for warning in warnings {
             let _ = writeln!(out, "- {}", plain_text(warning));
         }

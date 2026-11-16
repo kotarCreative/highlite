@@ -127,7 +127,7 @@
           }
         ],
         "coordinateSpace": "viewport-normalized",
-        "strokeWidth": 4,
+        "strokeWidth": 4.0,
         "fadeAfterMs": 4000,
         "fadeDurationMs": 400,
         "targetId": "t2"
@@ -533,7 +533,9 @@
         "atMs": 4000,
         "segmentIds": ["s1"],
         "keyframeIds": ["f1"],
-        "confidence": 1.0
+        "confidence": 1.0,
+        "frameMatch": "temporal",
+        "transcriptMatch": "approximate"
       },
       {
         "eventId": "event-click",
@@ -541,7 +543,9 @@
         "atMs": 4100,
         "segmentIds": ["s1"],
         "keyframeIds": ["f1"],
-        "confidence": 1.0
+        "confidence": 1.0,
+        "frameMatch": "temporal",
+        "transcriptMatch": "approximate"
       },
       {
         "eventId": "event-mark",
@@ -549,7 +553,9 @@
         "atMs": 12000,
         "segmentIds": ["s2"],
         "keyframeIds": ["f3"],
-        "confidence": 1.0
+        "confidence": 1.0,
+        "frameMatch": "temporal",
+        "transcriptMatch": "approximate"
       },
       {
         "eventId": "event-annotation",
@@ -557,7 +563,9 @@
         "atMs": 25000,
         "segmentIds": ["s3"],
         "keyframeIds": ["f4"],
-        "confidence": 1.0
+        "confidence": 1.0,
+        "frameMatch": "temporal",
+        "transcriptMatch": "approximate"
       },
       {
         "eventId": "event-navigate",
@@ -565,7 +573,9 @@
         "atMs": 40000,
         "segmentIds": [],
         "keyframeIds": ["f5"],
-        "confidence": 1.0
+        "confidence": 1.0,
+        "frameMatch": "temporal",
+        "transcriptMatch": "none"
       }
     ],
     "keyframes": [
@@ -693,7 +703,7 @@
           }
         ],
         "coordinateSpace": "viewport-normalized",
-        "strokeWidth": 4,
+        "strokeWidth": 4.0,
         "fadeAfterMs": 4000,
         "fadeDurationMs": 400,
         "targetId": "t2"
@@ -720,7 +730,129 @@
     ],
     "warnings": []
   },
-  "summary": "[highlite 1:00 · app.example.com/analytics “Analytics” · session-1]\nPage: https://app.example.com/analytics\n- #1 (0:04) [clicked button “Date range”] “This is the filter that breaks the chart.”\n  docs: analytics.date-range\n- #2 (0:12) [marked “Retention metric”] “And here the retention number drops.” · cue “here”\n  docs: analytics.net-retention\n- #3 (0:25) [annotated circle on “Retention metric”] “I am circling the number that moved.”\n  docs: analytics.net-retention\n- #4 (0:40) [navigated to https://app.example.com/settings]\n",
+  "report": {
+    "schemaVersion": "0.1.0",
+    "sessionId": "session-1",
+    "page": {
+      "initialUrl": "https://app.example.com/analytics",
+      "title": "Analytics"
+    },
+    "viewport": {
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1000.0,
+      "height": 800.0
+    },
+    "actions": [
+      {
+        "eventId": "event-click",
+        "seq": 1,
+        "atMs": 4100,
+        "kind": "click",
+        "action": "Clicked button “Date range”",
+        "target": {
+          "id": "t1",
+          "tag": "button",
+          "role": "button",
+          "label": "Date range",
+          "selector": "#date-range"
+        },
+        "evidence": {
+          "keyframeIds": ["f1"],
+          "frameMatch": "temporal",
+          "transcriptSegmentIds": ["s1"],
+          "transcriptMatch": "approximate",
+          "said": "This is the filter that breaks the chart.",
+          "confidence": 1.0
+        }
+      },
+      {
+        "eventId": "event-mark",
+        "seq": 2,
+        "atMs": 12000,
+        "kind": "mark",
+        "action": "Marked “Retention dropped”",
+        "target": {
+          "id": "t2",
+          "tag": "div",
+          "role": "img",
+          "label": "Retention metric",
+          "selector": "#retention"
+        },
+        "evidence": {
+          "keyframeIds": ["f3"],
+          "frameMatch": "temporal",
+          "transcriptSegmentIds": ["s2"],
+          "transcriptMatch": "approximate",
+          "said": "And here the retention number drops.",
+          "confidence": 1.0
+        }
+      },
+      {
+        "eventId": "event-annotation",
+        "seq": 3,
+        "atMs": 25000,
+        "kind": "annotation",
+        "action": "Added circle annotation on “Retention metric”",
+        "target": {
+          "id": "t2",
+          "tag": "div",
+          "role": "img",
+          "label": "Retention metric",
+          "selector": "#retention"
+        },
+        "evidence": {
+          "keyframeIds": ["f4"],
+          "frameMatch": "temporal",
+          "transcriptSegmentIds": ["s3"],
+          "transcriptMatch": "approximate",
+          "said": "I am circling the number that moved.",
+          "confidence": 1.0
+        }
+      },
+      {
+        "eventId": "event-navigate",
+        "seq": 4,
+        "atMs": 40000,
+        "kind": "navigate",
+        "action": "Navigated to app.example.com/settings",
+        "evidence": {
+          "keyframeIds": ["f5"],
+          "frameMatch": "temporal",
+          "transcriptSegmentIds": [],
+          "transcriptMatch": "none",
+          "confidence": 1.0
+        }
+      }
+    ],
+    "narration": [
+      {
+        "id": "s1",
+        "startMs": 3000,
+        "endMs": 6000,
+        "text": "This is the filter that breaks the chart."
+      },
+      {
+        "id": "s2",
+        "startMs": 10000,
+        "endMs": 14000,
+        "text": "And here the retention number drops."
+      },
+      {
+        "id": "s3",
+        "startMs": 23000,
+        "endMs": 27000,
+        "text": "I am circling the number that moved."
+      }
+    ],
+    "notes": [
+      "Observed actions only: expected and actual outcomes are not inferred.",
+      "Frame links marked exact come from capture-time event references; transcript links are temporal approximations.",
+      "Field values are included only when the capture explicitly enabled form values and the field passed exclusion rules.",
+      "Actions are listed independently of keyframe selection."
+    ]
+  },
+  "summary": "[highlite 1:00 · app.example.com/analytics “Analytics” · session-1]\nPage: https://app.example.com/analytics\n\n## Actions\n\nObserved actions in capture order. Frame links marked exact use capture-time references; transcript links are approximate.\n\n- 0:04 — Clicked button “Date range” · frame #1 (temporal) · “This is the filter that breaks the chart.”\n- 0:12 — Marked “Retention dropped” · frame #2 (temporal) · “And here the retention number drops.”\n- 0:25 — Added circle annotation on “Retention metric” · frame #3 (temporal) · “I am circling the number that moved.”\n- 0:40 — Navigated to app.example.com/settings · frame #4 (temporal)\n\n## Visual evidence\n\n- #1 (0:04) [clicked button “Date range”] “This is the filter that breaks the chart.”\n  docs: analytics.date-range\n- #2 (0:12) [marked “Retention metric”] “And here the retention number drops.” · cue “here”\n  docs: analytics.net-retention\n- #3 (0:25) [annotated circle on “Retention metric”] “I am circling the number that moved.”\n  docs: analytics.net-retention\n- #4 (0:40) [navigated to https://app.example.com/settings]\n\n## Narration\n\n- 0:03 — “This is the filter that breaks the chart.”\n- 0:10 — “And here the retention number drops.”\n- 0:23 — “I am circling the number that moved.”\n\n## Report notes\n\n- Observed actions only: expected and actual outcomes are not inferred.\n- Frame links marked exact come from capture-time event references; transcript links are temporal approximations.\n- Field values are included only when the capture explicitly enabled form values and the field passed exclusion rules.\n- Actions are listed independently of keyframe selection.\n",
   "warnings": [],
   "provenance": {
     "compiler": {

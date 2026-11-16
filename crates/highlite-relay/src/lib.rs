@@ -1084,6 +1084,7 @@ async fn run_command(state: &AppState, pipeline: &Pipeline, run: &PipelineRun) -
         .env("HIGHLITE_SUMMARY_PATH", bundle_dir.join("summary.md"))
         .env("HIGHLITE_MANIFEST_PATH", bundle_dir.join("manifest.json"))
         .env("HIGHLITE_BUNDLE_JSON", bundle_dir.join("bundle.json"))
+        .env("HIGHLITE_REPORT_JSON", bundle_dir.join("report.json"))
         .env("HIGHLITE_SCRAWL_JSON", bundle_dir.join("scrawl.json"))
         .env("HIGHLITE_ANALYSIS_JSON", bundle_dir.join("analysis.json"));
     for (name, value) in &pipeline.env {

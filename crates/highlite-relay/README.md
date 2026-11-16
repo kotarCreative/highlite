@@ -263,6 +263,7 @@ Commands receive absolute paths and the session identity:
 | `HIGHLITE_SUMMARY_PATH`  | `summary.md`                  |
 | `HIGHLITE_MANIFEST_PATH` | `manifest.json`               |
 | `HIGHLITE_BUNDLE_JSON`   | `bundle.json`                 |
+| `HIGHLITE_REPORT_JSON`   | `report.json`                 |
 | `HIGHLITE_SCRAWL_JSON`   | `scrawl.json`                 |
 | `HIGHLITE_ANALYSIS_JSON` | `analysis.json`               |
 
@@ -292,7 +293,8 @@ The browser only needs the ingest token. Keep the read token on a trusted backen
 The ZIP contains the same agent bundle the CLI writes:
 
 ```text
-summary.md          paste-ready narration and actions
+summary.md          paste-ready actions, narration, environment and limitations
+report.json         ordered report-ready actions with evidence links
 bundle.json         CompiledBundle: keyframes, crops, timeline, annotations, artifacts
 scrawl.json         Scrawl v1 subset
 analysis.json       capture analysis and warnings
@@ -302,8 +304,9 @@ frames/frame-*.png  cropped frames with annotations burned in
 audio.*             narration, when present
 ```
 
-An agent or worker should generally start with `bundle.json` (structured facts) and
-`summary.md` (human/LLM context), then load the referenced frames and audio as needed.
+An agent or worker should generally start with `summary.md` (human/LLM context) and then
+load `report.json` (ordered observed actions) or `bundle.json` (all structured facts), plus
+the referenced frames and audio as needed.
 
 The relay also has an optional webhook, so a consumer can be notified when a session is
 compiled instead of polling.

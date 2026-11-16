@@ -64,7 +64,8 @@ Options:
 The bundle directory contains:
 
 ```
-summary.md          paste-ready, time-aligned narration and actions
+summary.md          paste-ready actions, keyframes, narration, environment and limitations
+report.json         ordered report-ready actions with evidence links (CaptureReport)
 contact-sheet.png   every selected keyframe in one image
 frames/frame-01.png cropped keyframes with annotations burned in
 scrawl.json         Scrawl v1 subset
@@ -161,6 +162,17 @@ segments through `shift_transcript`.
 - Docs refs come from target metadata (`docsId`, `docs`, `doc`, `documentation`, `docsPath`)
   or a `context:` target id.
 - Timeline events are aligned to transcript segments and selected keyframes.
+- The report lists every user-facing action in capture order, independent of keyframe
+  selection. Internal `target` rows are omitted; environment and other context are reported
+  separately. Field values appear only when the manifest marks `valueCaptured: true`;
+  multiple-select changes retain every selected option label.
+- A keyframe that carries `eventIds` creates an exact event-to-frame link. Other frame links
+  are the nearest-frame heuristic (`frameMatch: "temporal"`). Merged frames union their event
+  ids. Transcript links remain `transcriptMatch: "approximate"`; `confidence` is a heuristic,
+  not a truth value.
+- Submit and other action URLs in the report are sanitized: query strings and fragments are
+  dropped. The report does not infer expected/actual outcomes. See
+  [the bug-report pipeline contract](../../docs/bug-report-pipeline.md).
 
 ## Scrawl export
 
@@ -177,9 +189,11 @@ cargo fmt --all -- --check
 ```
 
 The committed files in `fixtures/` are the language-neutral contract. `tests/golden.rs`
-checks the Rust output against `expected-bundle.json` and `expected-scrawl.json`, and
-`tests/cli.rs` checks the same path through the binary. `tests/bundle.rs` exercises the
-full directory pipeline, including rendered PNGs and a transcribed capture.
+checks the Rust output against `expected-bundle.json` and `expected-scrawl.json`,
+`tests/report.rs` checks `form-capture.json` against `expected-report.json` and covers
+exact/temporal evidence, merged links, and the legacy fixture, and `tests/cli.rs` checks the
+same path through the binary. `tests/bundle.rs` exercises the full directory pipeline,
+including rendered PNGs and a transcribed capture.
 
 A real engine is covered separately by the opt-in
 [`scripts/parakeet-e2e.mjs`](../../scripts/parakeet-e2e.mjs). It runs `ffmpeg` and

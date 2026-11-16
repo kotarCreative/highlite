@@ -4,6 +4,7 @@ pub mod compiler;
 pub mod cues;
 pub mod model;
 pub mod render;
+pub mod report;
 pub mod scrawl;
 pub mod summary;
 pub mod transcribe;
@@ -16,6 +17,7 @@ pub use compiler::{
 pub use cues::{SpeechCue, detect_speech_cues};
 pub use model::*;
 pub use render::{RenderedFrame, SheetFrame, render_contact_sheet, render_frame, save_png};
+pub use report::build_capture_report;
 pub use scrawl::*;
 pub use summary::build_handoff_summary;
 pub use transcribe::{

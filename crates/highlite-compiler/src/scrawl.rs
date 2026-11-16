@@ -269,6 +269,11 @@ fn target_for<'a>(manifest: &'a HighliteManifest, target_id: Option<&str>) -> Op
     })
 }
 
+fn target_label(manifest: &HighliteManifest, target_id: Option<&str>) -> Option<String> {
+    target_for(manifest, target_id)
+        .and_then(|target| target.label.clone().or_else(|| target.text_excerpt.clone()))
+}
+
 fn shape_for(kind: AnnotationKind) -> ScrawlShape {
     match kind {
         AnnotationKind::Circle => ScrawlShape::Circle,
@@ -560,6 +565,98 @@ pub fn to_scrawl_bundle(
                         .unwrap_or("")
                 ),
             }),
+            TimelineKind::Input => {
+                let label = target_label(manifest, event.target_id.as_deref())
+                    .unwrap_or_else(|| "field".to_owned());
+                let value = event
+                    .payload
+                    .get("valueCaptured")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    .then(|| event.payload.get("value").and_then(Value::as_str))
+                    .flatten();
+                events.push(ScrawlEvent::AppEvent {
+                    t: event.at_ms,
+                    label: match value {
+                        Some(value) => format!("input in “{label}”: “{value}”"),
+                        None => format!("input in “{label}”"),
+                    },
+                });
+            }
+            TimelineKind::Change => {
+                let label = target_label(manifest, event.target_id.as_deref())
+                    .unwrap_or_else(|| "field".to_owned());
+                let field_kind = event
+                    .payload
+                    .get("fieldKind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("select");
+                if field_kind == "checkbox" || field_kind == "radio" {
+                    let action = if event
+                        .payload
+                        .get("checked")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        "check"
+                    } else {
+                        "uncheck"
+                    };
+                    events.push(ScrawlEvent::AppEvent {
+                        t: event.at_ms,
+                        label: format!("{action} “{label}”"),
+                    });
+                } else {
+                    let captured = event
+                        .payload
+                        .get("valueCaptured")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let options = captured.then(|| {
+                        event
+                            .payload
+                            .get("optionLabels")
+                            .and_then(Value::as_array)
+                            .map(|values| {
+                                values
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .filter(|option| !option.is_empty())
+                                    .collect::<Vec<_>>()
+                                    .join("”, “")
+                            })
+                    });
+                    let option = captured
+                        .then(|| {
+                            event
+                                .payload
+                                .get("optionLabel")
+                                .or_else(|| event.payload.get("value"))
+                                .and_then(Value::as_str)
+                        })
+                        .flatten();
+                    let select_label = match (options.flatten(), option) {
+                        (Some(options), _) if options.is_empty() => {
+                            format!("clear selection in “{label}”")
+                        }
+                        (Some(options), _) => format!("select “{options}” in “{label}”"),
+                        (None, Some(option)) => format!("select “{option}” in “{label}”"),
+                        (None, None) => format!("change selection in “{label}”"),
+                    };
+                    events.push(ScrawlEvent::AppEvent {
+                        t: event.at_ms,
+                        label: select_label,
+                    });
+                }
+            }
+            TimelineKind::Submit => {
+                let label = target_label(manifest, event.target_id.as_deref())
+                    .unwrap_or_else(|| "form".to_owned());
+                events.push(ScrawlEvent::AppEvent {
+                    t: event.at_ms,
+                    label: format!("submit form “{label}”"),
+                });
+            }
             TimelineKind::Target => {}
         }
     }

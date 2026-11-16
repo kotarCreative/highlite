@@ -1,6 +1,6 @@
 mod common;
 
-use common::{make_manifest, viewport};
+use common::{make_manifest, read_fixture, viewport};
 use highlite_compiler::{
     CompileInput, ScrawlEvent, ScrawlExportError, ScrawlExportOptions, ScrawlShape,
     compile_capture, to_scrawl_bundle,
@@ -130,6 +130,28 @@ fn maps_interactions_and_route_changes() {
     assert_eq!(screens[1].t0, 40_000);
     assert_eq!(screens[1].t1, 60_000);
     assert_eq!(screens[1].name, "app.example.com/settings");
+}
+
+#[test]
+fn maps_form_activity_to_scrawl_app_events() {
+    let input: highlite_compiler::CompileInput =
+        serde_json::from_value(read_fixture("form-capture.json")).expect("form input");
+    let bundle =
+        to_scrawl_bundle(&compile_capture(&input), &ScrawlExportOptions::default()).unwrap();
+    let labels: Vec<&str> = bundle
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            ScrawlEvent::AppEvent { label, .. } => Some(label.as_str()),
+            ScrawlEvent::Click { .. } => None,
+        })
+        .collect();
+
+    assert!(labels.contains(&"input in “Search metrics”: “retention”"));
+    assert!(labels.contains(&"select “Last 30 days” in “Date range”"));
+    assert!(labels.contains(&"select “Retention”, “Churn” in “Categories”"));
+    assert!(labels.contains(&"check “Include archived”"));
+    assert!(labels.contains(&"submit form “Search filters”"));
 }
 
 #[test]

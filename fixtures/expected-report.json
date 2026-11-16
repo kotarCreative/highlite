@@ -1,0 +1,207 @@
+{
+  "schemaVersion": "0.1.0",
+  "sessionId": "session-form-1",
+  "page": {
+    "initialUrl": "https://app.example.com/search",
+    "title": "Search"
+  },
+  "viewport": {
+    "x": 0.0,
+    "y": 0.0,
+    "width": 1440.0,
+    "height": 1000.0
+  },
+  "environment": [
+    {
+      "scope": "environment",
+      "value": "Chrome 141 · Linux · viewport 1440×1000"
+    },
+    {
+      "scope": "app.version",
+      "value": "1.4.2"
+    }
+  ],
+  "actions": [
+    {
+      "eventId": "event-click",
+      "seq": 3,
+      "atMs": 1000,
+      "kind": "click",
+      "action": "Clicked button “Advanced filters”",
+      "target": {
+        "id": "t-button",
+        "tag": "button",
+        "role": "button",
+        "label": "Advanced filters",
+        "selector": "#advanced-filters"
+      },
+      "evidence": {
+        "keyframeIds": ["f-click"],
+        "frameMatch": "exact",
+        "transcriptSegmentIds": ["fs1"],
+        "transcriptMatch": "approximate",
+        "said": "I search for retention and pick the last 30 days.",
+        "confidence": 1.0
+      }
+    },
+    {
+      "eventId": "event-input",
+      "seq": 4,
+      "atMs": 2200,
+      "kind": "input",
+      "action": "Entered “retention” in field “Search metrics”",
+      "target": {
+        "id": "t-input",
+        "tag": "input",
+        "role": "textbox",
+        "label": "Search metrics",
+        "selector": "#metric-search"
+      },
+      "field": {
+        "kind": "text",
+        "inputType": "search"
+      },
+      "value": {
+        "captured": true,
+        "text": "retention",
+        "filled": true
+      },
+      "evidence": {
+        "keyframeIds": ["f-click"],
+        "frameMatch": "temporal",
+        "transcriptSegmentIds": ["fs1"],
+        "transcriptMatch": "approximate",
+        "said": "I search for retention and pick the last 30 days.",
+        "confidence": 0.7
+      }
+    },
+    {
+      "eventId": "event-select",
+      "seq": 5,
+      "atMs": 3500,
+      "kind": "change",
+      "action": "Selected “Last 30 days” in field “Date range”",
+      "target": {
+        "id": "t-select",
+        "tag": "select",
+        "role": "combobox",
+        "label": "Date range",
+        "selector": "#date-range"
+      },
+      "field": {
+        "kind": "select",
+        "inputType": "select"
+      },
+      "value": {
+        "captured": true,
+        "text": "30",
+        "optionLabel": "Last 30 days"
+      },
+      "evidence": {
+        "keyframeIds": ["f-submit"],
+        "frameMatch": "temporal",
+        "transcriptSegmentIds": ["fs1"],
+        "transcriptMatch": "approximate",
+        "confidence": 0.7
+      }
+    },
+    {
+      "eventId": "event-multi",
+      "seq": 6,
+      "atMs": 3900,
+      "kind": "change",
+      "action": "Selected “Retention”, “Churn” in field “Categories”",
+      "target": {
+        "id": "t-multi",
+        "tag": "select",
+        "role": "listbox",
+        "label": "Categories",
+        "selector": "#categories"
+      },
+      "field": {
+        "kind": "select",
+        "inputType": "select"
+      },
+      "value": {
+        "captured": true,
+        "optionLabels": ["Retention", "Churn"]
+      },
+      "evidence": {
+        "keyframeIds": ["f-submit"],
+        "frameMatch": "temporal",
+        "transcriptSegmentIds": ["fs1"],
+        "transcriptMatch": "approximate",
+        "confidence": 0.7
+      }
+    },
+    {
+      "eventId": "event-check",
+      "seq": 7,
+      "atMs": 4200,
+      "kind": "change",
+      "action": "Checked “Include archived”",
+      "target": {
+        "id": "t-checkbox",
+        "tag": "input",
+        "role": "checkbox",
+        "label": "Include archived",
+        "selector": "#include-archived"
+      },
+      "field": {
+        "kind": "checkbox",
+        "inputType": "checkbox"
+      },
+      "value": {
+        "captured": false,
+        "checked": true
+      },
+      "evidence": {
+        "keyframeIds": ["f-submit"],
+        "frameMatch": "temporal",
+        "transcriptSegmentIds": ["fs1"],
+        "transcriptMatch": "approximate",
+        "confidence": 0.7
+      }
+    },
+    {
+      "eventId": "event-submit",
+      "seq": 8,
+      "atMs": 5000,
+      "kind": "submit",
+      "action": "Submitted form “Search filters” via “Apply filters”",
+      "target": {
+        "id": "t-form",
+        "tag": "form",
+        "role": "form",
+        "label": "Search filters",
+        "selector": "#filters"
+      },
+      "submit": {
+        "method": "get",
+        "action": "app.example.com/search",
+        "submitterLabel": "Apply filters"
+      },
+      "evidence": {
+        "keyframeIds": ["f-submit"],
+        "frameMatch": "exact",
+        "transcriptSegmentIds": ["fs1"],
+        "transcriptMatch": "approximate",
+        "confidence": 1.0
+      }
+    }
+  ],
+  "narration": [
+    {
+      "id": "fs1",
+      "startMs": 2000,
+      "endMs": 4000,
+      "text": "I search for retention and pick the last 30 days."
+    }
+  ],
+  "notes": [
+    "Observed actions only: expected and actual outcomes are not inferred.",
+    "Frame links marked exact come from capture-time event references; transcript links are temporal approximations.",
+    "Field values are included only when the capture explicitly enabled form values and the field passed exclusion rules.",
+    "Actions are listed independently of keyframe selection."
+  ]
+}

@@ -204,6 +204,7 @@ pub fn write_bundle(
         .map_err(|error| RenderError::new(format!("Could not write summary.md: {error}")))?;
     write_json(&output_directory.join("manifest.json"), &compiled.manifest)?;
     write_json(&output_directory.join("analysis.json"), &compiled.analysis)?;
+    write_json(&output_directory.join("report.json"), &compiled.report)?;
     write_json(&output_directory.join("bundle.json"), compiled)?;
     write_json(&output_directory.join("scrawl.json"), &scrawl)?;
 

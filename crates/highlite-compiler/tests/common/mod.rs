@@ -195,6 +195,7 @@ pub fn make_manifest() -> HighliteManifest {
                 annotation_ids: Vec::new(),
                 transcript_segment_ids: Vec::new(),
                 reason: KeyframeReason::Interaction,
+                event_ids: Vec::new(),
             },
             Keyframe {
                 id: "f2".to_owned(),
@@ -204,6 +205,7 @@ pub fn make_manifest() -> HighliteManifest {
                 annotation_ids: Vec::new(),
                 transcript_segment_ids: Vec::new(),
                 reason: KeyframeReason::Interaction,
+                event_ids: Vec::new(),
             },
             Keyframe {
                 id: "f3".to_owned(),
@@ -213,6 +215,7 @@ pub fn make_manifest() -> HighliteManifest {
                 annotation_ids: Vec::new(),
                 transcript_segment_ids: Vec::new(),
                 reason: KeyframeReason::Mark,
+                event_ids: Vec::new(),
             },
             Keyframe {
                 id: "f4".to_owned(),
@@ -222,6 +225,7 @@ pub fn make_manifest() -> HighliteManifest {
                 annotation_ids: vec!["a1".to_owned()],
                 transcript_segment_ids: Vec::new(),
                 reason: KeyframeReason::Annotation,
+                event_ids: Vec::new(),
             },
             Keyframe {
                 id: "f5".to_owned(),
@@ -231,6 +235,7 @@ pub fn make_manifest() -> HighliteManifest {
                 annotation_ids: Vec::new(),
                 transcript_segment_ids: Vec::new(),
                 reason: KeyframeReason::Interaction,
+                event_ids: Vec::new(),
             },
         ],
         artifacts: Artifacts::default(),

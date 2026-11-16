@@ -16,6 +16,21 @@ import {
   ANNOTATION_FADE_DURATION_MS,
   ANNOTATION_LINE_WIDTH,
 } from './annotation';
+import { describeEnvironment } from './environment';
+import {
+  accessibleLabel,
+  changePayload,
+  classifyField,
+  contentEditableHost,
+  fieldDescriptor,
+  isFieldElement,
+  isSubmitControlDescriptor,
+  readableTextExcerpt,
+  submitPayload,
+  textEditPayload,
+  TextEditCoalescer,
+  type FieldClassification,
+} from './form';
 import { DisplayMediaFrameProvider } from './frame-provider';
 import { CaptureToolbar, type PermissionDecision, type PermissionRequest } from './toolbar';
 
@@ -42,6 +57,11 @@ export interface HighliteOptions {
     microphone?: boolean;
     frames?: 'none' | 'prompt';
     interactions?: boolean;
+    /**
+     * Include values for supported, non-sensitive form fields. Disabled by default.
+     * Password, hidden, file, private, disabled and secret-like fields are always excluded.
+     */
+    formValues?: boolean;
     disabledRoutes?: string[];
   };
   privacy?: {
@@ -123,6 +143,20 @@ interface PermissionStep extends Omit<PermissionRequest, 'step' | 'total'> {
   waitingMessage: string;
 }
 
+/**
+ * A submit-control click is held until the current task finishes. If the browser fires
+ * `submit`, the click is redundant; if validation or a click handler blocks submission,
+ * the click is the only evidence of the failed attempt.
+ */
+interface PendingSubmitClick {
+  form: HTMLFormElement;
+  target: Target | undefined;
+  button: number;
+  x: number;
+  y: number;
+  timer: number;
+}
+
 const MICROPHONE_PERMISSION: PermissionStep = {
   kind: 'microphone',
   title: 'Microphone',
@@ -158,6 +192,8 @@ const DEFAULT_REDACT_SELECTORS = [
   'input[type="password"]',
 ];
 
+const FORM_EDIT_IDLE_MS = 500;
+
 function createId(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
   return `hl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -177,19 +213,13 @@ function textExcerpt(value: string | null | undefined): string | undefined {
   return text.length > 160 ? `${text.slice(0, 157)}…` : text;
 }
 
-function isFieldLike(element: Element): boolean {
-  return (
-    element.matches('input, textarea, select, [contenteditable="true"]') ||
-    element.closest('[contenteditable="true"]') !== null
-  );
-}
-
 function implicitRole(element: Element): string | undefined {
   const tag = element.tagName.toLowerCase();
   if (tag === 'button') return 'button';
   if (tag === 'a' && element.hasAttribute('href')) return 'link';
   if (tag === 'select') return element.hasAttribute('multiple') ? 'listbox' : 'combobox';
   if (tag === 'textarea') return 'textbox';
+  if (tag === 'form') return 'form';
   if (tag === 'input') {
     const type = (element.getAttribute('type') ?? 'text').toLowerCase();
     if (type === 'checkbox' || type === 'radio' || type === 'button' || type === 'submit')
@@ -227,6 +257,9 @@ class Highlite implements HighliteController {
   readonly #audioChunks: Blob[] = [];
   readonly #pendingCaptures = new Set<Promise<void>>();
   readonly #interactionTimers = new Set<number>();
+  readonly #pendingSubmitClicks = new Set<PendingSubmitClick>();
+  readonly #textEdits = new TextEditCoalescer();
+  readonly #formFields = new Map<string, FieldClassification>();
   readonly #keyframeOrder = new Map<string, number>();
   readonly #frameEndUnsubscribe: (() => void) | undefined;
   #toolbar: CaptureToolbar | undefined;
@@ -243,6 +276,7 @@ class Highlite implements HighliteController {
   #startPromise: Promise<void> | undefined;
   #interactionAttached = false;
   #scrollTimer: number | undefined;
+  #formEditTimer: number | undefined;
   #lastTargetId: string | undefined;
   #lastUrl = '';
   #routeUnsubscribe: (() => void) | undefined;
@@ -352,6 +386,8 @@ class Highlite implements HighliteController {
     this.#audioChunks.length = 0;
     this.#pendingCaptures.clear();
     this.#interactionTimers.clear();
+    this.#textEdits.clear();
+    this.#formFields.clear();
     this.#keyframeOrder.clear();
     this.#toolbar?.clearAnnotations();
   }
@@ -362,6 +398,10 @@ class Highlite implements HighliteController {
       throw new Error('There is no active Highlite session to stop.');
     }
 
+    // Commit held clicks and text edits before the duration snapshot so the action list
+    // is complete and no event can fall after the recorded session duration.
+    this.#flushPendingSubmitClicks();
+    this.#flushTextEdit();
     const durationMs = this.#timeline.now();
     this.#state = 'processing';
     this.#removeInteractionListeners();
@@ -466,14 +506,20 @@ class Highlite implements HighliteController {
 
   async mark(label = 'Marked moment'): Promise<void> {
     this.#assertRecording();
+    this.#flushPendingSubmitClicks();
+    this.#flushTextEdit();
     const normalizedLabel = textExcerpt(label) ?? 'Marked moment';
     const event = this.#timeline!.record('mark', { label: normalizedLabel }, this.#lastTargetId);
     this.#emit('mark-added', { label: normalizedLabel, atMs: event.atMs });
-    await this.#trackCapture(this.#captureKeyframe('mark', this.#lastTargetId, undefined));
+    await this.#trackCapture(
+      this.#captureKeyframe('mark', this.#lastTargetId, undefined, false, event.id),
+    );
   }
 
   context(scope: string, value: string): void {
     this.#assertRecording();
+    this.#flushPendingSubmitClicks();
+    this.#flushTextEdit();
     this.#timeline!.record('context', {
       scope: textExcerpt(scope) ?? 'page',
       value: textExcerpt(value) ?? '',
@@ -646,6 +692,7 @@ class Highlite implements HighliteController {
     }
 
     this.#state = 'recording';
+    this.#recordEnvironment();
     this.#attachInteractionListeners();
     this.#toolbar?.setRecording(true);
     const micStatus =
@@ -666,6 +713,17 @@ class Highlite implements HighliteController {
     if (this.#frameAvailable) {
       void this.#trackCapture(this.#captureKeyframe('interaction', undefined, undefined));
     }
+  }
+
+  #recordEnvironment(): void {
+    this.#timeline?.record('context', {
+      scope: 'environment',
+      value: describeEnvironment({
+        userAgent: navigator.userAgent,
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }),
+    });
   }
 
   async #hasMicrophonePermission(): Promise<boolean> {
@@ -811,19 +869,32 @@ class Highlite implements HighliteController {
     if (this.#interactionAttached || this.#captureOptions.interactions === false) return;
     this.#interactionAttached = true;
     const onClick = (event: MouseEvent): void => this.#captureClick(event);
+    const onInput = (event: Event): void => this.#captureInput(event);
+    const onChange = (event: Event): void => this.#captureChange(event);
+    const onSubmit = (event: Event): void => this.#captureSubmit(event);
     const onScroll = (): void => {
       if (this.#scrollTimer !== undefined) window.clearTimeout(this.#scrollTimer);
       this.#scrollTimer = window.setTimeout(() => {
         this.#scrollTimer = undefined;
         if (this.#state !== 'recording' || !this.#timeline) return;
-        this.#timeline.record('scroll', { x: window.scrollX, y: window.scrollY });
+        this.#flushPendingSubmitClicks();
+        this.#flushTextEdit();
+        const event = this.#timeline.record('scroll', { x: window.scrollX, y: window.scrollY });
         this.#toolbar?.clearAnnotations();
-        void this.#trackCapture(this.#captureKeyframe('interaction', undefined, undefined));
+        void this.#trackCapture(
+          this.#captureKeyframe('interaction', undefined, undefined, false, event.id),
+        );
       }, 180);
     };
     document.addEventListener('click', onClick, true);
+    document.addEventListener('input', onInput, true);
+    document.addEventListener('change', onChange, true);
+    document.addEventListener('submit', onSubmit, true);
     window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     this.#interactionCleanups.push(() => document.removeEventListener('click', onClick, true));
+    this.#interactionCleanups.push(() => document.removeEventListener('input', onInput, true));
+    this.#interactionCleanups.push(() => document.removeEventListener('change', onChange, true));
+    this.#interactionCleanups.push(() => document.removeEventListener('submit', onSubmit, true));
     this.#interactionCleanups.push(() => window.removeEventListener('scroll', onScroll, true));
     this.#installRouteListeners();
   }
@@ -833,28 +904,308 @@ class Highlite implements HighliteController {
     const path = event.composedPath();
     if (path.some((entry) => entry instanceof Element && entry.hasAttribute('data-highlite-root')))
       return;
+    this.#flushPendingSubmitClicks();
     const element = path.find((entry): entry is Element => entry instanceof Element);
     if (!element || this.#isDisabledElement(element)) return;
 
+    const control = this.#formControlFor(element);
+    if (control && this.#isDisabledElement(control)) return;
+
+    const submitForm = control ? this.#submitFormForControl(control) : undefined;
+    if (
+      control &&
+      submitForm &&
+      !this.#matchesAny(control, this.#redactSelectors()) &&
+      !this.#matchesAny(submitForm, this.#redactSelectors())
+    ) {
+      this.#deferSubmitClick(submitForm, control, event);
+      return;
+    }
+
+    if (control && this.#shouldSkipFieldClick(control)) return;
+
+    this.#flushTextEdit();
     const target = this.#resolveTarget(element);
+    this.#recordClickAction(
+      target,
+      event.button,
+      Math.round(event.clientX),
+      Math.round(event.clientY),
+    );
+  }
+
+  #recordClickAction(target: Target | undefined, button: number, x: number, y: number): void {
+    if (this.#state !== 'recording' || !this.#timeline) return;
     if (target) {
       this.#lastTargetId = target.id;
       this.#timeline.record('target', { role: target.role, tag: target.tag }, target.id);
       this.#emit('target-selected', { target });
     }
-    this.#timeline.record(
-      'click',
-      { button: event.button, x: Math.round(event.clientX), y: Math.round(event.clientY) },
-      target?.id,
-    );
+    const clickEvent = this.#timeline.record('click', { button, x, y }, target?.id);
 
     if (this.#frameAvailable) {
-      void this.#trackCapture(this.#captureKeyframe('interaction', target?.id, undefined));
+      void this.#trackCapture(
+        this.#captureKeyframe('interaction', target?.id, undefined, false, clickEvent.id),
+      );
       this.#scheduleInteraction(() => {
         if (this.#state === 'recording')
-          void this.#trackCapture(this.#captureKeyframe('interaction', target?.id, undefined));
+          void this.#trackCapture(
+            this.#captureKeyframe('interaction', target?.id, undefined, false, clickEvent.id),
+          );
       }, 350);
     }
+  }
+
+  #deferSubmitClick(form: HTMLFormElement, control: Element, event: MouseEvent): void {
+    // Commit preceding text before the click, but do not record the click yet: a
+    // synchronous `submit` event makes it redundant, while no submit means the click is
+    // the only evidence that the attempt failed.
+    this.#flushTextEdit();
+    const pending: PendingSubmitClick = {
+      form,
+      target: this.#resolveTarget(control),
+      button: event.button,
+      x: Math.round(event.clientX),
+      y: Math.round(event.clientY),
+      timer: 0,
+    };
+    pending.timer = window.setTimeout(() => {
+      this.#pendingSubmitClicks.delete(pending);
+      if (this.#state !== 'recording') return;
+      this.#recordClickAction(pending.target, pending.button, pending.x, pending.y);
+    }, 0);
+    this.#pendingSubmitClicks.add(pending);
+  }
+
+  #flushPendingSubmitClicks(): void {
+    for (const pending of this.#pendingSubmitClicks) {
+      window.clearTimeout(pending.timer);
+      this.#pendingSubmitClicks.delete(pending);
+      this.#recordClickAction(pending.target, pending.button, pending.x, pending.y);
+    }
+  }
+
+  #clearPendingSubmitClicks(): void {
+    for (const pending of this.#pendingSubmitClicks) window.clearTimeout(pending.timer);
+    this.#pendingSubmitClicks.clear();
+  }
+
+  #cancelPendingSubmitClick(form: HTMLFormElement): void {
+    let latest: PendingSubmitClick | undefined;
+    for (const pending of this.#pendingSubmitClicks) {
+      if (pending.form === form) latest = pending;
+    }
+    if (!latest) return;
+    window.clearTimeout(latest.timer);
+    this.#pendingSubmitClicks.delete(latest);
+  }
+
+  #submitFormForControl(control: Element): HTMLFormElement | undefined {
+    if (!(control instanceof HTMLButtonElement) && !(control instanceof HTMLInputElement))
+      return undefined;
+    const descriptor = {
+      tagName: control.tagName,
+      type: control.getAttribute('type'),
+    };
+    if (!isSubmitControlDescriptor(descriptor)) return undefined;
+    return control.form ?? undefined;
+  }
+
+  #captureInput(event: Event): void {
+    if (this.#state !== 'recording' || !this.#timeline) return;
+    this.#flushPendingSubmitClicks();
+    const element = this.#eventElement(event);
+    if (!element || this.#isDisabledElement(element)) return;
+    const host = contentEditableHost(element) ?? element;
+    if (!isFieldElement(host)) return;
+    const field = this.#fieldTarget(host);
+    if (
+      !field ||
+      (field.classification.kind !== 'text' && field.classification.kind !== 'textarea')
+    )
+      return;
+
+    this.#lastTargetId = field.target.id;
+    const value = this.#fieldValue(host);
+    const committed = this.#textEdits.push(field.target.id, value, this.#timeline.now());
+    if (committed) this.#recordTextEdit(committed);
+    this.#scheduleTextEditFlush();
+  }
+
+  #captureChange(event: Event): void {
+    if (this.#state !== 'recording' || !this.#timeline) return;
+    this.#flushPendingSubmitClicks();
+    const element = this.#eventElement(event);
+    if (!element || this.#isDisabledElement(element)) return;
+    const host = contentEditableHost(element) ?? element;
+    if (!isFieldElement(host)) return;
+    const field = this.#fieldTarget(host);
+    if (!field) return;
+    const classification = field.classification;
+
+    // Text fields are represented by coalesced input events. A change only means the
+    // field lost focus, so commit the pending edit before any later action.
+    if (classification.kind === 'text' || classification.kind === 'textarea') {
+      this.#flushTextEdit();
+      return;
+    }
+
+    this.#flushTextEdit();
+    this.#lastTargetId = field.target.id;
+    const input = host instanceof HTMLInputElement ? host : undefined;
+    const select = host instanceof HTMLSelectElement ? host : undefined;
+    const selectedOptions = select ? Array.from(select.selectedOptions) : [];
+    const multiple = select?.multiple === true;
+    const optionLabels = multiple
+      ? selectedOptions.map((option) => option.textContent ?? option.value).filter(Boolean)
+      : undefined;
+    this.#timeline.record(
+      'change',
+      changePayload(classification, {
+        ...(input ? { checked: input.checked, value: input.value } : {}),
+        ...(select && !multiple ? { value: select.value } : {}),
+        ...(select && !multiple && selectedOptions[0]?.textContent
+          ? { optionLabel: selectedOptions[0].textContent }
+          : {}),
+        ...(optionLabels ? { optionLabels } : {}),
+      }),
+      field.target.id,
+    );
+  }
+
+  #captureSubmit(event: Event): void {
+    if (this.#state !== 'recording' || !this.#timeline) return;
+    if (!(event.target instanceof HTMLFormElement)) return;
+    const form = event.target;
+    // The browser fired submit for the click we are holding, so that click is redundant.
+    this.#cancelPendingSubmitClick(form);
+    if (this.#isDisabledElement(form) || this.#matchesAny(form, this.#redactSelectors())) return;
+
+    this.#flushTextEdit();
+    const target = this.#resolveTarget(form);
+    if (target) this.#lastTargetId = target.id;
+    const submitter = event instanceof SubmitEvent ? event.submitter : null;
+    const submitterLabel =
+      submitter && !this.#matchesAny(submitter, this.#redactSelectors())
+        ? this.#accessibleLabel(submitter)
+        : undefined;
+    const payload = submitPayload(
+      { method: form.method, action: this.#safeUrl(form.action) },
+      submitterLabel,
+    );
+    const submitEvent = this.#timeline.record('submit', payload, target?.id);
+    if (this.#frameAvailable) {
+      void this.#trackCapture(
+        this.#captureKeyframe('interaction', target?.id, undefined, false, submitEvent.id),
+      );
+    }
+  }
+
+  #eventElement(event: Event): Element | undefined {
+    const path = event.composedPath();
+    if (path.some((entry) => entry instanceof Element && entry.hasAttribute('data-highlite-root')))
+      return undefined;
+    return path.find((entry): entry is Element => entry instanceof Element);
+  }
+
+  #formControlFor(element: Element): Element | undefined {
+    const host = contentEditableHost(element);
+    if (host) return host;
+    const control = element.closest('input, textarea, select, button');
+    if (control) return control;
+    const label = element.closest('label');
+    return label instanceof HTMLLabelElement ? (label.control ?? undefined) : undefined;
+  }
+
+  #shouldSkipFieldClick(control: Element): boolean {
+    // A submit control that will produce a `submit` event never needs its click; a
+    // blocked submit is handled by the deferred-click path before this check.
+    if (this.#submitFormForControl(control)) return true;
+    if (!isFieldElement(control)) return false;
+    const classification = this.#classifyField(control);
+    // Skip every classified field, including excluded password/secret fields, so no
+    // field click duplicates the semantic input/change action (or leaks a target).
+    // Unsupported field types keep their click, because no semantic action replaces it.
+    return classification !== undefined && classification.excluded !== 'unsupported';
+  }
+
+  #accessibleLabel(element: Element): string | undefined {
+    return accessibleLabel(element, { privateSelectors: this.#redactSelectors() });
+  }
+
+  #fieldDescriptor(element: Element): ReturnType<typeof fieldDescriptor> {
+    return fieldDescriptor(element, { privateSelectors: this.#redactSelectors() });
+  }
+
+  #classifyField(element: Element): FieldClassification | undefined {
+    const descriptor = this.#fieldDescriptor(element);
+    if (!descriptor) return undefined;
+    const classification = classifyField(descriptor, {
+      captureValues: this.#captureOptions.formValues === true,
+      redacted: this.#matchesAny(element, this.#redactSelectors()),
+      disabled: this.#isDisabledElement(element),
+    });
+    // A rich-text field can contain a private region while the field itself is public.
+    // Keep the action but drop the value rather than capturing that region's text.
+    if (classification.captureValue && this.#containsAny(element, this.#redactSelectors())) {
+      return { ...classification, captureValue: false };
+    }
+    return classification;
+  }
+
+  #fieldTarget(
+    element: Element,
+  ): { target: Target; classification: FieldClassification } | undefined {
+    const existingId = this.#elementIds.get(element);
+    if (existingId) {
+      const classification = this.#formFields.get(existingId);
+      const target = this.#targets.get(existingId);
+      if (classification && target) return { target, classification };
+    }
+    const classification = this.#classifyField(element);
+    if (!classification || classification.excluded) return undefined;
+    const target = this.#resolveTarget(element);
+    if (!target) return undefined;
+    this.#formFields.set(target.id, classification);
+    return { target, classification };
+  }
+
+  #fieldValue(element: Element): string {
+    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+      return element.value;
+    return element instanceof HTMLElement ? (element.innerText ?? element.textContent ?? '') : '';
+  }
+
+  #recordTextEdit(edit: { key: string; value: string }): void {
+    if (!this.#timeline) return;
+    const classification = this.#formFields.get(edit.key);
+    if (!classification) return;
+    this.#timeline.record('input', textEditPayload(classification, edit.value), edit.key);
+  }
+
+  #scheduleTextEditFlush(): void {
+    if (this.#formEditTimer !== undefined) window.clearTimeout(this.#formEditTimer);
+    this.#formEditTimer = window.setTimeout(() => {
+      this.#formEditTimer = undefined;
+      this.#flushTextEdit();
+    }, FORM_EDIT_IDLE_MS);
+  }
+
+  #flushTextEdit(): void {
+    if (this.#formEditTimer !== undefined) {
+      window.clearTimeout(this.#formEditTimer);
+      this.#formEditTimer = undefined;
+    }
+    if (this.#state !== 'recording') {
+      this.#textEdits.clear();
+      return;
+    }
+    const edit = this.#textEdits.flush();
+    if (edit) this.#recordTextEdit(edit);
+  }
+
+  #redactSelectors(): string[] {
+    return this.#privacyOptions.redactSelectors ?? DEFAULT_REDACT_SELECTORS;
   }
 
   async #addAnnotation(
@@ -865,12 +1216,14 @@ class Highlite implements HighliteController {
     element: Element | null,
   ): Promise<void> {
     if (this.#state !== 'recording' || !this.#timeline) return;
+    this.#flushPendingSubmitClicks();
     const target =
       element && !this.#isDisabledElement(element) ? this.#resolveTarget(element) : undefined;
     if (element && this.#isDisabledElement(element)) {
       this.#toolbar?.setStatus('Annotations are disabled on this element.');
       return;
     }
+    this.#flushTextEdit();
     const annotation: Annotation = {
       id: createId(),
       atMs: this.#timeline.now(),
@@ -883,7 +1236,7 @@ class Highlite implements HighliteController {
       ...(target ? { targetId: target.id } : {}),
     };
     this.#annotations.push(annotation);
-    this.#timeline.record(
+    const annotationEvent = this.#timeline.record(
       'annotation',
       { annotationId: annotation.id, annotationKind: kind, x: clientX, y: clientY },
       target?.id,
@@ -892,7 +1245,13 @@ class Highlite implements HighliteController {
     this.#emit('annotation-added', { annotation });
     const capture = (async (): Promise<void> => {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      await this.#captureKeyframe('annotation', target?.id, annotation.id, true);
+      await this.#captureKeyframe(
+        'annotation',
+        target?.id,
+        annotation.id,
+        true,
+        annotationEvent.id,
+      );
     })();
     await this.#trackCapture(capture);
   }
@@ -902,6 +1261,7 @@ class Highlite implements HighliteController {
     targetId: string | undefined,
     annotationId: string | undefined,
     allowProcessing = false,
+    eventId?: string,
   ): Promise<void> {
     const token = this.#sessionToken;
     const canCapture =
@@ -933,6 +1293,7 @@ class Highlite implements HighliteController {
         annotationIds: annotationId ? [annotationId] : [],
         transcriptSegmentIds: [],
         reason,
+        ...(eventId ? { eventIds: [eventId] } : {}),
       });
       this.#keyframeOrder.set(id, order);
     } catch (error) {
@@ -944,10 +1305,7 @@ class Highlite implements HighliteController {
 
   #resolveTarget(element: Element): Target | undefined {
     if (element.closest('[data-highlite-root]')) return undefined;
-    const redacted = this.#matchesAny(
-      element,
-      this.#privacyOptions.redactSelectors ?? DEFAULT_REDACT_SELECTORS,
-    );
+    const redacted = this.#matchesAny(element, this.#redactSelectors());
     const selector = this.#selectorFor(element);
     const context = this.#findRegisteredMetadata(element);
     let id = this.#elementIds.get(element);
@@ -977,15 +1335,22 @@ class Highlite implements HighliteController {
   }
 
   #targetLabel(element: Element): Partial<Pick<Target, 'label' | 'textExcerpt'>> {
+    const privateSelectors = this.#redactSelectors();
     const label =
+      this.#accessibleLabel(element) ??
       element.getAttribute('aria-label') ??
       element.getAttribute('alt') ??
       element.getAttribute('title') ??
-      (element instanceof HTMLLabelElement ? element.innerText : undefined);
+      (element instanceof HTMLLabelElement
+        ? readableTextExcerpt(element, privateSelectors)
+        : undefined);
     const safeLabel = textExcerpt(label);
-    const excerpt = isFieldLike(element)
-      ? undefined
-      : textExcerpt((element as HTMLElement).innerText ?? element.textContent);
+    // Field values and form copy are not target excerpts. Ancestor excerpts also drop
+    // private, hidden, and embedded control content so a descendant cannot leak.
+    const excerpt =
+      isFieldElement(element) || element.tagName.toLowerCase() === 'form'
+        ? undefined
+        : readableTextExcerpt(element, privateSelectors);
     return {
       ...(safeLabel ? { label: safeLabel } : {}),
       ...(excerpt ? { textExcerpt: excerpt } : {}),
@@ -1012,6 +1377,16 @@ class Highlite implements HighliteController {
     return selectors.some((selector) => {
       try {
         return element.closest(selector) !== null;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  #containsAny(element: Element, selectors: string[]): boolean {
+    return selectors.some((selector) => {
+      try {
+        return element.querySelector(selector) !== null;
       } catch {
         return false;
       }
@@ -1071,7 +1446,13 @@ class Highlite implements HighliteController {
     if (nextUrl === this.#lastUrl) return;
     const previousUrl = this.#lastUrl;
     this.#lastUrl = nextUrl;
-    this.#timeline.record('navigate', { from: previousUrl, to: nextUrl, source });
+    this.#flushPendingSubmitClicks();
+    this.#flushTextEdit();
+    const navigateEvent = this.#timeline.record('navigate', {
+      from: previousUrl,
+      to: nextUrl,
+      source,
+    });
     // Annotations are viewport coordinates on the page they were drawn on; a route
     // change makes them stale, just like scrolling does.
     this.#toolbar?.clearAnnotations();
@@ -1082,15 +1463,24 @@ class Highlite implements HighliteController {
     }
     this.#scheduleInteraction(() => {
       if (this.#state === 'recording')
-        void this.#trackCapture(this.#captureKeyframe('interaction', undefined, undefined));
+        void this.#trackCapture(
+          this.#captureKeyframe('interaction', undefined, undefined, false, navigateEvent.id),
+        );
     }, 350);
   }
 
   #removeInteractionListeners(): void {
+    this.#clearPendingSubmitClicks();
     if (this.#scrollTimer !== undefined) {
       window.clearTimeout(this.#scrollTimer);
       this.#scrollTimer = undefined;
     }
+    if (this.#formEditTimer !== undefined) {
+      window.clearTimeout(this.#formEditTimer);
+      this.#formEditTimer = undefined;
+    }
+    this.#textEdits.clear();
+    this.#formFields.clear();
     for (const timer of this.#interactionTimers) window.clearTimeout(timer);
     this.#interactionTimers.clear();
     for (const cleanup of this.#interactionCleanups.splice(0)) cleanup();

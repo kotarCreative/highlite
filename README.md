@@ -4,7 +4,7 @@ Highlite is an embeddable browser SDK for capturing narrated, visually contextua
 
 ## Status
 
-The repository is being built in milestones. The current slice includes the typed timeline, a floating Shadow DOM toolbar with one-at-a-time permission prompts, microphone and permission-based frame capture, click/scroll/SPA-route context, DOM targets, four annotation tools that fade after two seconds, deterministic Markdown, ZIP export, an authenticated relay that compiles uploads, and an interactive analytics demo. The canonical compiler is the Rust crate [`crates/highlite-compiler`](crates/highlite-compiler); it selects keyframes, aligns narration by clause, plans DOM-target crops, transcribes audio in the compile step, burns annotations into cropped frames, renders a contact sheet, and writes an agent bundle next to the handoff summary. It is checked against shared golden fixtures in [`fixtures/`](fixtures). See [the implementation notes](docs/implementation-notes.md) for browser constraints and progress.
+The repository is being built in milestones. The current slice includes the typed timeline, a floating Shadow DOM toolbar with one-at-a-time permission prompts, microphone and permission-based frame capture, click/scroll/SPA-route context, semantic form activity (coalesced text edits, select/checkbox/radio changes and submits), DOM targets, four annotation tools that fade after two seconds, deterministic Markdown, ZIP export, an authenticated relay that compiles uploads, and an interactive analytics demo. The canonical compiler is the Rust crate [`crates/highlite-compiler`](crates/highlite-compiler); it selects keyframes, aligns narration by clause, plans DOM-target crops, transcribes audio in the compile step, burns annotations into cropped frames, renders a contact sheet, and writes an agent bundle with an ordered action report next to the handoff summary. It is checked against shared golden fixtures in [`fixtures/`](fixtures). See [the implementation notes](docs/implementation-notes.md) for browser constraints and progress, and the [bug-report pipeline contract](docs/bug-report-pipeline.md) for the future report generator seam.
 
 ## Development
 
@@ -46,7 +46,7 @@ cargo run -p highlite-compiler -- bundle ./capture --out ./capture-bundle \
   --transcribe whisper --model ~/.local/share/whisper/ggml-base.en.bin
 ```
 
-The bundle contains `summary.md`, `contact-sheet.png`, `frames/frame-XX.png`,
+The bundle contains `summary.md`, `report.json`, `contact-sheet.png`, `frames/frame-XX.png`,
 `scrawl.json`, `bundle.json`, `analysis.json`, and `manifest.json`. Use
 `--transcribe off` when the manifest already has a transcript. See the
 [compiler README](crates/highlite-compiler/README.md) for backends and options.
@@ -91,7 +91,7 @@ import { createHighlite } from '@highlite/sdk';
 
 const capture = createHighlite({
   ui: 'floating',
-  capture: { microphone: true, frames: 'prompt', interactions: true },
+  capture: { microphone: true, frames: 'prompt', interactions: true, formValues: false },
   privacy: { redactSelectors: ['[data-private]', 'input[type="password"]'] },
   onComplete: async (bundle) => {
     console.log(bundle.manifest, bundle.summary);
@@ -108,6 +108,33 @@ await capture.destroy();
 ```
 
 `capture.frames` defaults to `'prompt'`; use `'none'` to avoid requesting display capture or inject a `FrameProvider`. Permission denial is non-fatal, but the bundle will clearly report unavailable visual evidence. `ui: 'headless'` omits the toolbar and sends permission requests directly; with the floating UI each permission gets its own modal and browser prompt before recording begins. If microphone access was already granted for the origin, the microphone step is skipped and recording starts with audio as soon as the remaining steps are confirmed. A controller can record consecutive sessions by calling `start()` again after `stop()` or `cancel()`; each session gets a fresh id and its own timeline, annotations, targets, and files, while `export()` returns the most recently completed bundle. The generated IIFE is `packages/sdk/dist/highlite.iife.js` and exposes the explicit `window.Highlite` namespace.
+
+### Form activity and report context
+
+With `capture.interactions` enabled, Highlite records semantic form actions instead of raw keystrokes:
+
+- text-like fields produce coalesced `input` events (one action per typing burst, plus a flush at stop),
+- selects (including every selected option of a `<select multiple>`), checkboxes, and radios produce `change` events,
+- form submissions produce `submit` events with the form label and submitter label,
+- a submit-button click blocked by native validation is retained as a click instead of being lost,
+- associated `<label>`, `aria-labelledby`, `aria-label`, and other accessible hints become target labels,
+- private and hidden descendants are removed from labels and target excerpts.
+
+Clicks on captured non-submit fields are suppressed so the action list does not duplicate them with a click plus an input/change. A submit click is held until submission either succeeds (only `submit` is kept) or is blocked (the click is kept). Field values are **excluded by default**; an action still records the field type, label, and whether text was entered. To include supported ordinary values, opt in explicitly:
+
+```ts
+createHighlite({ capture: { formValues: true } });
+```
+
+Even with opt-in, password, hidden, and file inputs, fields named or autocompleted like secrets (`current-password`, `new-password`, `one-time-code`, `cc-*`, token/API-key/OTP-like names), inputs inside `redactSelectors`, and inputs inside `disableSelectors` are excluded entirely. A sensitive-looking label such as “API token” keeps the action but omits its value. Highlite never reads values from neighbouring text, labels, or implicit form serialization.
+
+At session start the SDK records a bounded `environment` context event (browser family and major version, coarse platform, viewport size), not a full user-agent fingerprint. App versions use the existing context channel, for example after `start()`:
+
+```ts
+capture.context('app.version', '1.4.2');
+```
+
+The compiler reports environment/context separately from user actions. See [the bug-report pipeline contract](docs/bug-report-pipeline.md) for `report.json`, evidence links, and generator limitations.
 
 For a script-tag integration, serve that built file from your own static asset host:
 
@@ -238,7 +265,7 @@ While a Highlite session is recording, hold **Ctrl** (Control on macOS) and pres
 - Screenshots only exist when a user-approved frame provider supplies actual pixels. Ordinary page DOM APIs are not treated as screenshots.
 - Browsers cannot skip their own screen-share picker. Highlite preselects the current tab and hides monitor/window options where Chromium supports it, but the user still confirms the share in the browser prompt.
 - Captured pixels are **not automatically redacted**. Review the shared surface and avoid capturing sensitive content.
-- Highlite does not record raw keystrokes or form values; query strings are omitted from URLs unless explicitly enabled.
+- Highlite does not record raw keystrokes or implicit form serialization. It records coalesced field activity; field values are omitted unless `capture.formValues` explicitly opts in, and sensitive fields are always excluded. Query strings are omitted from URLs unless explicitly enabled.
 - Cross-origin iframes, closed shadow roots, and browser chrome are outside ordinary DOM inspection.
 - The browser records narration audio; transcription happens in the compiler step. With the
   local whisper.cpp backend no capture data leaves the machine. A configured custom or hosted

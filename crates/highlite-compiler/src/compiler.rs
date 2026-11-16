@@ -7,9 +7,11 @@ use crate::cues::{SpeechCue, detect_speech_cues, weak_window_ms};
 use crate::model::{
     COMPILER_NAME, COMPILER_SCHEMA_VERSION, COMPILER_VERSION, CaptureAnalysis, CompileInput,
     CompileOptions, CompileProvenance, CompiledBundle, CompiledKeyframe, CompilerInfo, DocsRef,
-    EffectiveOptions, EventAlignment, FrameCandidate, HighliteManifest, Keyframe, KeyframeReason,
-    NormalizedRect, Target, TimelineEvent, TimelineKind, TranscriptAnalysis, ViewportRect,
+    EffectiveOptions, EventAlignment, FrameCandidate, FrameMatch, HighliteManifest, Keyframe,
+    KeyframeReason, NormalizedRect, Target, TimelineEvent, TimelineKind, TranscriptAnalysis,
+    TranscriptMatch, ViewportRect,
 };
+use crate::report::build_capture_report;
 use crate::summary::build_handoff_summary;
 
 const DEFAULT_MIN_GAP_MS: u64 = 500;
@@ -275,8 +277,17 @@ fn build_candidates(
         .iter()
         .map(|frame| {
             let mut frame = frame.clone();
-            let event =
-                nearest_event(&manifest.timeline, frame.keyframe.at_ms, EVENT_MATCH_MS).cloned();
+            let linked_event = frame.keyframe.event_ids.iter().find_map(|id| {
+                manifest
+                    .timeline
+                    .iter()
+                    .find(|event| &event.id == id)
+                    .cloned()
+            });
+            let exact_link = linked_event.is_some();
+            let event = linked_event.or_else(|| {
+                nearest_event(&manifest.timeline, frame.keyframe.at_ms, EVENT_MATCH_MS).cloned()
+            });
             let reason = frame.keyframe.reason;
             let target_id = frame
                 .keyframe
@@ -302,6 +313,9 @@ fn build_candidates(
             );
             let mut score = base_score(reason);
             let mut score_reasons = vec![format!("reason:{}", reason.as_str())];
+            if exact_link {
+                score_reasons.push("event:exact".to_owned());
+            }
 
             if target_id.is_some() {
                 score += 8;
@@ -438,6 +452,14 @@ fn merge_candidates(left: Candidate, right: Candidate) -> Candidate {
             .transcript_segment_ids
             .into_iter()
             .chain(loser_frame.keyframe.transcript_segment_ids),
+    );
+    merged.frame.keyframe.event_ids = unique_strings(
+        merged
+            .frame
+            .keyframe
+            .event_ids
+            .into_iter()
+            .chain(loser_frame.keyframe.event_ids),
     );
     merged.score_reasons = unique_strings(merged.score_reasons.into_iter().chain(loser_reasons));
     merged.target_id = merged.target_id.or(loser_target);
@@ -826,6 +848,12 @@ fn build_event_alignment(
         .timeline
         .iter()
         .map(|event| {
+            // An exact link is recorded by the capture itself. It is stronger than, and
+            // never silently downgraded to, the nearest-frame heuristic.
+            let exact: Vec<&CompiledKeyframe> = keyframes
+                .iter()
+                .filter(|keyframe| keyframe.event_ids.iter().any(|id| id == &event.id))
+                .collect();
             let nearest = keyframes
                 .iter()
                 .map(|keyframe| (keyframe, keyframe.at_ms.abs_diff(event.at_ms)))
@@ -834,6 +862,15 @@ fn build_event_alignment(
                 Some((keyframe, distance)) if distance <= 2_000 => vec![keyframe],
                 _ => Vec::new(),
             };
+            let (linked, frame_match) = if exact.is_empty() {
+                match nearby.first() {
+                    Some(_) => (nearby.clone(), FrameMatch::Temporal),
+                    None => (Vec::new(), FrameMatch::None),
+                }
+            } else {
+                (exact, FrameMatch::Exact)
+            };
+
             let overlapping: Vec<&(String, u64, u64)> = segments
                 .iter()
                 .filter(|(_, start_ms, end_ms)| {
@@ -841,27 +878,37 @@ fn build_event_alignment(
                         && *end_ms >= event.at_ms.saturating_sub(1_500)
                 })
                 .collect();
-            let segment_ids = if nearby.is_empty() {
+            let linked_segments = unique_strings(
+                linked
+                    .iter()
+                    .flat_map(|keyframe| keyframe.transcript_segment_ids.clone()),
+            );
+            let segment_ids = if linked_segments.is_empty() {
                 unique_strings(overlapping.iter().map(|(id, _, _)| id.clone()))
             } else {
-                unique_strings(
-                    nearby
-                        .iter()
-                        .flat_map(|keyframe| keyframe.transcript_segment_ids.clone()),
-                )
+                linked_segments
             };
-            let confidence = match nearest {
-                None => {
-                    if segment_ids.is_empty() {
-                        0.0
-                    } else {
-                        0.4
+            let transcript_match = if segment_ids.is_empty() {
+                TranscriptMatch::None
+            } else {
+                TranscriptMatch::Approximate
+            };
+            let confidence = if frame_match == FrameMatch::Exact {
+                1.0
+            } else {
+                match nearest {
+                    None => {
+                        if segment_ids.is_empty() {
+                            0.0
+                        } else {
+                            0.4
+                        }
                     }
+                    Some((_, distance)) if distance <= 500 => 1.0,
+                    Some((_, distance)) if distance <= 2_000 => 0.7,
+                    Some(_) if !segment_ids.is_empty() => 0.4,
+                    Some(_) => 0.0,
                 }
-                Some((_, distance)) if distance <= 500 => 1.0,
-                Some((_, distance)) if distance <= 2_000 => 0.7,
-                Some(_) if !segment_ids.is_empty() => 0.4,
-                Some(_) => 0.0,
             };
 
             EventAlignment {
@@ -869,8 +916,10 @@ fn build_event_alignment(
                 kind: event.kind,
                 at_ms: event.at_ms,
                 segment_ids,
-                keyframe_ids: nearby.iter().map(|keyframe| keyframe.id.clone()).collect(),
+                keyframe_ids: linked.iter().map(|keyframe| keyframe.id.clone()).collect(),
                 confidence,
+                frame_match,
+                transcript_match,
             }
         })
         .collect()
@@ -885,6 +934,7 @@ fn to_core_keyframe(keyframe: &CompiledKeyframe) -> Keyframe {
         annotation_ids: keyframe.annotation_ids.clone(),
         transcript_segment_ids: keyframe.transcript_segment_ids.clone(),
         reason: keyframe.reason,
+        event_ids: keyframe.event_ids.clone(),
     }
 }
 
@@ -984,6 +1034,7 @@ pub fn compile_capture_with(
                 target_ids: candidate.frame.keyframe.target_ids.clone(),
                 annotation_ids: candidate.frame.keyframe.annotation_ids.clone(),
                 transcript_segment_ids: alignment.transcript_segment_ids,
+                event_ids: candidate.frame.keyframe.event_ids.clone(),
                 said: alignment.said,
                 cue: candidate.cue.as_ref().map(|cue| cue.word.clone()),
                 score: candidate.score,
@@ -995,6 +1046,8 @@ pub fn compile_capture_with(
 
     let docs_refs = collect_docs_refs(manifest, resolver);
     let warnings = warnings.into_vec();
+    let alignment = build_event_alignment(manifest, &keyframes);
+    let report = build_capture_report(manifest, &keyframes, &alignment, &warnings);
     let transcript_text = manifest
         .transcript
         .iter()
@@ -1015,7 +1068,7 @@ pub fn compile_capture_with(
                 .iter()
                 .any(|segment| !segment.word_timings.is_empty()),
         },
-        alignment: build_event_alignment(manifest, &keyframes),
+        alignment,
         keyframes: keyframes.clone(),
         targets: manifest.targets.clone(),
         annotations: manifest.annotations.clone(),
@@ -1034,6 +1087,7 @@ pub fn compile_capture_with(
         &manifest.transcript,
         &docs_refs,
         &warnings,
+        &report,
     );
 
     CompiledBundle {
@@ -1042,6 +1096,7 @@ pub fn compile_capture_with(
         viewport,
         keyframes,
         analysis,
+        report,
         summary,
         warnings,
         provenance: CompileProvenance {

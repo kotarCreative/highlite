@@ -50,6 +50,7 @@ fn keyframe(id: &str, at_ms: u64, reason: KeyframeReason, annotation_ids: &[&str
         annotation_ids: annotation_ids.iter().map(|id| (*id).to_owned()).collect(),
         transcript_segment_ids: Vec::new(),
         reason,
+        event_ids: Vec::new(),
     }
 }
 

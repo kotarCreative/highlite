@@ -61,6 +61,7 @@ fn writes_an_agent_ready_bundle_with_rendered_frames_and_a_sheet() {
     assert!(output.path().join("summary.md").is_file());
     assert!(output.path().join("bundle.json").is_file());
     assert!(output.path().join("analysis.json").is_file());
+    assert!(output.path().join("report.json").is_file());
     assert!(output.path().join("contact-sheet.png").is_file());
     assert!(output.path().join("audio.webm").is_file());
     assert!(output.path().join("frames/frame-01.png").is_file());

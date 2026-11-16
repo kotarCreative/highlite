@@ -203,6 +203,33 @@ try {
     manifest.timeline.some((event) => event.kind === 'mark'),
     'Marks must be in the timeline.',
   );
+  const selectChange = manifest.timeline.find(
+    (event) => event.kind === 'change' && event.payload.fieldKind === 'select',
+  );
+  assert.ok(selectChange, 'Select changes must be recorded as semantic actions.');
+  assert.equal(
+    selectChange.payload.valueCaptured,
+    false,
+    'Field values must stay out of the manifest by default.',
+  );
+  assert.equal(
+    selectChange.payload.optionLabel,
+    undefined,
+    'Select option labels must not be captured without opt-in.',
+  );
+  assert.equal(
+    manifest.targets.find((target) => target.id === selectChange.targetId)?.label,
+    'Date range',
+    'A form field target must use its associated label.',
+  );
+  assert.ok(
+    !manifest.timeline.some(
+      (event) =>
+        event.kind === 'click' &&
+        manifest.targets.find((target) => target.id === event.targetId)?.tag === 'select',
+    ),
+    'A select click must not duplicate the change action.',
+  );
   const annotation = manifest.annotations.find((entry) => entry.kind === 'circle');
   assert.ok(annotation, 'The circle annotation must be in the manifest.');
   assert.equal(annotation.strokeWidth, 4, 'Annotations must record their CSS stroke width.');
@@ -222,6 +249,10 @@ try {
   assert.ok(!JSON.stringify(manifest).includes('must-not-be-exported'));
   assert.ok(
     (await page.locator('#summary-preview').textContent()).includes('Visual evidence: unavailable'),
+  );
+  assert.ok(
+    (await page.locator('#summary-preview').textContent()).includes('Changed selection'),
+    'The SDK summary must describe form changes.',
   );
   assert.deepEqual(pageErrors, [], `Unexpected browser errors: ${pageErrors.join(', ')}`);
 
@@ -389,6 +420,237 @@ try {
     assert.ok(request.bytes > 0, 'The relay upload must not be empty.');
   }
   await new Promise((resolve) => relay.close(resolve));
+
+  await iifePage.evaluate(async () => {
+    const form = document.createElement('form');
+    form.id = 'smoke-form';
+    form.setAttribute('aria-label', 'Bug report form');
+    form.style.cssText =
+      'position:fixed;top:0;left:0;z-index:2147483647;background:white;padding:8px;display:flex;flex-direction:column;gap:4px;max-height:100vh;overflow:auto;';
+    form.innerHTML = `
+      <label for="smoke-search">Search metrics</label>
+      <input id="smoke-search" name="query" type="search" />
+      <label for="smoke-range">Date range</label>
+      <select id="smoke-range" name="range">
+        <option value="30">Last 30 days</option>
+        <option value="7">Last 7 days</option>
+      </select>
+      <label for="smoke-tags">Categories</label>
+      <select id="smoke-tags" name="tags" multiple>
+        <option value="retention">Retention</option>
+        <option value="churn">Churn</option>
+        <option value="activation">Activation</option>
+      </select>
+      <label><input id="smoke-archived" type="checkbox" name="archived" /> Include archived</label>
+      <label for="smoke-required">Ticket id</label>
+      <input id="smoke-required" name="ticket" required />
+      <div id="smoke-note" contenteditable="plaintext-only" aria-label="Bug notes"></div>
+      <div id="smoke-private-note" contenteditable="plaintext-only" aria-label="Private content"><span data-private>secret-note-value</span></div>
+      <div id="smoke-card" aria-label="Order card" style="padding:8px">Order <span data-private>secret-customer-value</span><span hidden>hidden-order-value</span><span style="display:none">css-hidden-order-value</span></div>
+      <label for="smoke-password">Password</label>
+      <input id="smoke-password" name="password" type="password" autocomplete="current-password" />
+      <label for="smoke-otp">Verification code</label>
+      <input id="smoke-otp" name="code" autocomplete="one-time-code" />
+      <div data-private><label for="smoke-private">Private note</label><input id="smoke-private" name="private-note" /></div>
+      <div data-highlite-ignore><label for="smoke-ignored">Ignored note</label><input id="smoke-ignored" name="ignored-note" /></div>
+      <button id="smoke-plain" type="button">Plain action</button>
+      <button id="smoke-apply" type="submit">Apply <span data-private>secret-submit</span>report</button>
+    `;
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      window.__smokeSubmitted = true;
+    });
+    document.body.prepend(form);
+
+    const frameProvider = {
+      async start() {},
+      async capture() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 40;
+        const context = canvas.getContext('2d');
+        context.fillStyle = '#5271ff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      },
+      async stop() {},
+    };
+    const capture = window.Highlite.createHighlite({
+      ui: 'headless',
+      capture: { microphone: false, frames: 'none', interactions: true, formValues: true },
+      privacy: { disableSelectors: ['[data-highlite-ignore]'] },
+      frameProvider,
+    });
+    window.__formCapture = capture;
+    await capture.start();
+  });
+  await iifePage.locator('#smoke-search').pressSequentially('retention', { delay: 10 });
+  await iifePage.locator('#smoke-range').selectOption('7');
+  await iifePage.locator('#smoke-tags').selectOption(['retention', 'churn']);
+  await iifePage.locator('#smoke-archived').check();
+  await iifePage.locator('#smoke-note').fill('checkout fails');
+  await iifePage.locator('#smoke-private-note').click();
+  await iifePage.keyboard.type('public');
+  await iifePage.locator('#smoke-card').click({ position: { x: 4, y: 4 } });
+  await iifePage.locator('#smoke-plain').click();
+  await iifePage.locator('#smoke-password').fill('must-not-be-captured');
+  await iifePage.locator('#smoke-otp').fill('123456');
+  await iifePage.locator('#smoke-private').fill('private-value');
+  await iifePage.locator('#smoke-ignored').fill('ignored-value');
+  // Native validation blocks this submit, so the click itself must remain in the timeline.
+  await iifePage.locator('#smoke-apply').click();
+  await iifePage.waitForTimeout(25);
+  await iifePage.locator('#smoke-required').fill('HL-42');
+  await iifePage.locator('#smoke-apply').click();
+  await iifePage.waitForFunction(() => window.__smokeSubmitted === true);
+  const formManifest = await iifePage.evaluate(async () => {
+    const bundle = await window.__formCapture.stop();
+    await window.__formCapture.destroy();
+    return bundle.manifest;
+  });
+
+  const formEvent = (kind, label) =>
+    formManifest.timeline.find(
+      (event) =>
+        event.kind === kind &&
+        formManifest.targets.find((target) => target.id === event.targetId)?.label === label,
+    );
+  const inputEvent = formEvent('input', 'Search metrics');
+  assert.ok(inputEvent, 'Opt-in text activity must be captured as one coalesced event.');
+  assert.equal(inputEvent.payload.valueCaptured, true);
+  assert.equal(inputEvent.payload.value, 'retention');
+  assert.equal(
+    formManifest.timeline.filter(
+      (event) => event.kind === 'input' && event.targetId === inputEvent.targetId,
+    ).length,
+    1,
+    'Typing must be coalesced, not recorded per keystroke.',
+  );
+  const rangeEvent = formEvent('change', 'Date range');
+  assert.ok(rangeEvent, 'Select changes must be captured.');
+  assert.equal(rangeEvent.payload.optionLabel, 'Last 7 days');
+  const categoriesEvent = formEvent('change', 'Categories');
+  assert.ok(categoriesEvent, 'Multiple-select changes must be captured.');
+  assert.deepEqual(categoriesEvent.payload.optionLabels, ['Retention', 'Churn']);
+  assert.equal(
+    categoriesEvent.payload.optionLabel,
+    undefined,
+    'A multiple select must report all selections rather than one scalar label.',
+  );
+  const archivedEvent = formEvent('change', 'Include archived');
+  assert.ok(archivedEvent, 'Checkbox changes must be captured.');
+  assert.equal(archivedEvent.payload.checked, true);
+  const noteEvent = formEvent('input', 'Bug notes');
+  assert.ok(noteEvent, 'A plaintext-only contenteditable must be captured as a field.');
+  assert.equal(noteEvent.payload.value, 'checkout fails');
+  assert.equal(
+    noteEvent.payload.valueCaptured,
+    true,
+    'Opt-in values must apply to supported contenteditable fields.',
+  );
+  const noteTarget = formManifest.targets.find((target) => target.id === noteEvent.targetId);
+  assert.equal(
+    noteTarget?.textExcerpt,
+    undefined,
+    'A contenteditable value must not also become a target excerpt.',
+  );
+  const privateNoteEvent = formEvent('input', 'Private content');
+  assert.ok(privateNoteEvent, 'A contenteditable containing private content must keep its action.');
+  assert.equal(
+    privateNoteEvent.payload.valueCaptured,
+    false,
+    'A rich-text field containing a private region must not capture its value.',
+  );
+  assert.equal(privateNoteEvent.payload.value, undefined);
+  const cardClick = formManifest.timeline.find(
+    (event) =>
+      event.kind === 'click' &&
+      formManifest.targets.find((target) => target.id === event.targetId)?.label === 'Order card',
+  );
+  assert.ok(cardClick, 'A click target must keep its accessible label.');
+  const cardTarget = formManifest.targets.find((target) => target.id === cardClick.targetId);
+  assert.equal(
+    cardTarget?.textExcerpt,
+    'Order',
+    'Private and hidden descendants must not enter a target excerpt.',
+  );
+  const plainButtonClick = formManifest.timeline.find(
+    (event) =>
+      event.kind === 'click' &&
+      formManifest.targets.find((target) => target.id === event.targetId)?.label === 'Plain action',
+  );
+  assert.ok(
+    plainButtonClick,
+    'A non-submit button must keep its click rather than being treated as a field.',
+  );
+  const submitEvent = formEvent('submit', 'Bug report form');
+  assert.ok(submitEvent, 'Form submits must be captured.');
+  assert.equal(submitEvent.payload.submitterLabel, 'Apply report');
+  assert.equal(
+    formManifest.targets.find((target) => target.id === submitEvent.targetId)?.textExcerpt,
+    undefined,
+    'A form target must use its label, not an excerpt of its fields.',
+  );
+  const failedSubmitClick = formManifest.timeline.find(
+    (event) =>
+      event.kind === 'click' &&
+      formManifest.targets.find((target) => target.id === event.targetId)?.label === 'Apply report',
+  );
+  assert.ok(
+    failedSubmitClick,
+    'A submit click blocked by native validation must still be captured.',
+  );
+  assert.equal(
+    formManifest.timeline.filter(
+      (event) =>
+        event.kind === 'click' &&
+        formManifest.targets.find((target) => target.id === event.targetId)?.label ===
+          'Apply report',
+    ).length,
+    1,
+    'A successful submit must consume its own click instead of recording a duplicate.',
+  );
+  assert.equal(
+    formManifest.timeline.filter((event) => event.kind === 'submit').length,
+    1,
+    'A submit click must not duplicate the submit action.',
+  );
+  assert.ok(
+    !formManifest.timeline.some(
+      (event) =>
+        event.kind === 'input' &&
+        event.targetId === inputEvent.targetId &&
+        event.payload.value === 'must-not-be-captured',
+    ),
+    'Password values must never be captured.',
+  );
+  for (const selector of ['#smoke-password', '#smoke-otp', '#smoke-private', '#smoke-ignored']) {
+    assert.ok(
+      !formManifest.targets.some((target) => target.selector === selector),
+      `Excluded field ${selector} must not create a target.`,
+    );
+  }
+  assert.ok(
+    !JSON.stringify(formManifest).includes('must-not-be-captured'),
+    'Password values must not leak into the manifest.',
+  );
+  assert.ok(
+    !JSON.stringify(formManifest).includes('private-value') &&
+      !JSON.stringify(formManifest).includes('ignored-value'),
+    'Private and disabled fields must not leak values.',
+  );
+  assert.ok(
+    !JSON.stringify(formManifest).includes('secret-customer-value') &&
+      !JSON.stringify(formManifest).includes('hidden-order-value') &&
+      !JSON.stringify(formManifest).includes('css-hidden-order-value') &&
+      !JSON.stringify(formManifest).includes('secret-note-value') &&
+      !JSON.stringify(formManifest).includes('secret-submit'),
+    'Private and hidden descendants must not leak through an ancestor target, field value, or submitter label.',
+  );
+  const submitKeyframe = formManifest.keyframes.find((frame) =>
+    frame.eventIds?.includes(submitEvent.id),
+  );
+  assert.ok(submitKeyframe, 'A frame captured for a submit must carry an exact event link.');
 
   const audioContext = await browser.newContext({
     permissions: ['microphone'],

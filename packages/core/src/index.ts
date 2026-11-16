@@ -5,7 +5,10 @@ export type TimelineKind =
   | 'annotation'
   | 'mark'
   | 'target'
-  | 'context';
+  | 'context'
+  | 'input'
+  | 'change'
+  | 'submit';
 
 export interface TimelineEvent {
   id: string;
@@ -68,6 +71,8 @@ export interface Keyframe {
   annotationIds: string[];
   transcriptSegmentIds: string[];
   reason: 'mark' | 'annotation' | 'interaction' | 'visual-change' | 'speech-cue';
+  /** Timeline events this frame was captured for, when the capture knew the link. */
+  eventIds?: string[];
 }
 
 export interface HighliteManifest {

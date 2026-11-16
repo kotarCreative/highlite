@@ -6,6 +6,7 @@ use serde_json::Value;
 pub const COMPILER_SCHEMA_VERSION: &str = "0.1.0";
 pub const COMPILER_NAME: &str = "highlite-compiler";
 pub const COMPILER_VERSION: &str = "0.1.0";
+pub const REPORT_SCHEMA_VERSION: &str = "0.1.0";
 /// Used when a capture records a fade start but not an animation duration.
 pub const DEFAULT_ANNOTATION_FADE_MS: u64 = 400;
 
@@ -41,6 +42,26 @@ pub enum TimelineKind {
     Mark,
     Target,
     Context,
+    Input,
+    Change,
+    Submit,
+}
+
+impl TimelineKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Click => "click",
+            Self::Scroll => "scroll",
+            Self::Navigate => "navigate",
+            Self::Annotation => "annotation",
+            Self::Mark => "mark",
+            Self::Target => "target",
+            Self::Context => "context",
+            Self::Input => "input",
+            Self::Change => "change",
+            Self::Submit => "submit",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -196,6 +217,9 @@ pub struct Keyframe {
     pub annotation_ids: Vec<String>,
     pub transcript_segment_ids: Vec<String>,
     pub reason: KeyframeReason,
+    /// Timeline events this frame was captured for. Optional so older captures load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub event_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -300,6 +324,9 @@ pub struct CompiledKeyframe {
     pub target_ids: Vec<String>,
     pub annotation_ids: Vec<String>,
     pub transcript_segment_ids: Vec<String>,
+    /// Capture-time event links, unioned when nearby candidates merge.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub event_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub said: Option<String>,
     /// The spoken cue word that selected this frame, when one did.
@@ -311,6 +338,26 @@ pub struct CompiledKeyframe {
     pub crop: Option<NormalizedRect>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FrameMatch {
+    /// The frame recorded this exact event id at capture time.
+    Exact,
+    /// The frame is the nearest one in time; this is a heuristic link.
+    Temporal,
+    #[default]
+    None,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TranscriptMatch {
+    /// Segment overlap and keyframe clause alignment are temporal heuristics.
+    Approximate,
+    #[default]
+    None,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EventAlignment {
@@ -320,6 +367,130 @@ pub struct EventAlignment {
     pub segment_ids: Vec<String>,
     pub keyframe_ids: Vec<String>,
     pub confidence: f64,
+    #[serde(default)]
+    pub frame_match: FrameMatch,
+    #[serde(default)]
+    pub transcript_match: TranscriptMatch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportTarget {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selector: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportField {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportValue {
+    /// True only when the capture explicitly included the field value.
+    pub captured: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub option_label: Option<String>,
+    /// All selected options for a multiple select. An empty list means none remain selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub option_labels: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSubmit {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitter_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportEvidence {
+    pub keyframe_ids: Vec<String>,
+    pub frame_match: FrameMatch,
+    pub transcript_segment_ids: Vec<String>,
+    pub transcript_match: TranscriptMatch,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<String>,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportAction {
+    pub event_id: String,
+    pub seq: u64,
+    pub at_ms: u64,
+    pub kind: TimelineKind,
+    /// Human-readable observed action. It never asserts expected or actual outcomes.
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<ReportTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<ReportField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<ReportValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submit: Option<ReportSubmit>,
+    pub evidence: ReportEvidence,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportContext {
+    pub scope: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportNarration {
+    pub id: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureReport {
+    pub schema_version: String,
+    pub session_id: String,
+    pub page: Page,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport: Option<ViewportRect>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<ReportContext>,
+    pub actions: Vec<ReportAction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub narration: Vec<ReportNarration>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context: Vec<ReportContext>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limitations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -395,6 +566,7 @@ pub struct CompiledBundle {
     pub viewport: Option<ViewportRect>,
     pub keyframes: Vec<CompiledKeyframe>,
     pub analysis: CaptureAnalysis,
+    pub report: CaptureReport,
     pub summary: String,
     pub warnings: Vec<String>,
     pub provenance: CompileProvenance,
