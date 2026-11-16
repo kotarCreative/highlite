@@ -44,6 +44,11 @@ runs.
 
 ## First launch and relay lifecycle
 
+Launching the app opens the dashboard and adds a sparkles icon to the menu bar.
+Closing the dashboard leaves the app and relay running. Open the app again
+(including with `open dist/Highlite.app`) or choose **Open Dashboard** from the
+menu bar to bring the dashboard back, including when it is minimized.
+
 The app resolves the relay binary in this order:
 
 1. The binary path in Settings
@@ -105,7 +110,13 @@ send an `Origin` header.
 ## Dashboard
 
 The menu bar shows relay status, a pending-suggestion count, dashboard,
-start/stop, settings, and quit. The dashboard contains:
+start/stop, settings, and quit.
+
+Standard macOS editing shortcuts work in focused text fields, including **Cmd+V**
+to paste API keys into secure fields. Secure fields keep secrets masked and retain
+the system restrictions on copying or cutting their contents.
+
+The dashboard contains:
 
 - **Overview**: relay state, version, endpoint, tokens, setup counts, relay log.
 - **Sessions**: capture metadata, Jira draft review/edit/publish, OpenCode run

@@ -115,6 +115,14 @@ and generated drafts.
 
 ## UI
 
+The dashboard opens on launch. Closing it keeps the app in the menu bar without a
+Dock icon. Opening the app again (including `open dist/Highlite.app`) restores and
+focuses the dashboard, even if it was closed or minimized.
+
+The app installs the standard Edit menu so **Cmd+V**, **Cmd+C**, **Cmd+X**, and
+**Cmd+A** reach the focused text field. API-key fields accept paste while remaining
+masked; copying or cutting secrets remains subject to macOS secure-field restrictions.
+
 The menu bar shows relay status, a pending-suggestion badge, and actions to open the
 dashboard, start or stop the relay, and quit.
 
@@ -178,11 +186,16 @@ apps/macos/
 
 After launching from `dist/Highlite.app`:
 
-1. The relay starts and the status indicator becomes reachable.
+1. The dashboard opens, the relay starts, and the status indicator becomes reachable.
+   Close the dashboard and run `open dist/Highlite.app` again; it should reopen without
+   starting another app or relay. Minimize it and repeat; it should restore and focus.
 2. Tokens exist only in Keychain, `relay.env` is `0600`, and the config directory is
    `0700`.
 3. Provider and Jira setup can be saved and reports **Saved, not verified** where
    applicable.
+   Paste a dummy key into each API-key field with **Cmd+V** (do not save it); it
+   should remain masked. Check **Cmd+A** and replacement paste, and verify that
+   copy/paste still works in ordinary text fields. Repeat in the provider editor sheet.
 4. Configure the OpenCode directory, run discovery, and confirm the version and eligible
    sessions.
 5. Capture a session and let the recipe create a pending suggestion.

@@ -108,6 +108,18 @@ public enum OpenCodeLocator {
         configuredPath: String?,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String? {
+        resolveExecutable(
+            configuredPath: configuredPath,
+            environment: environment,
+            isExecutable: { FileManager.default.isExecutableFile(atPath: $0) }
+        )
+    }
+
+    static func resolveExecutable(
+        configuredPath: String?,
+        environment: [String: String],
+        isExecutable: (String) -> Bool
+    ) -> String? {
         let chosen: String
         if let configuredPath, !configuredPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             guard let validated = try? validateConfiguredPath(configuredPath) else { return nil }
@@ -120,15 +132,14 @@ public enum OpenCodeLocator {
             chosen = "opencode"
         }
 
-        let fileManager = FileManager.default
         if chosen.contains("/") {
-            return fileManager.isExecutableFile(atPath: chosen) ? chosen : nil
+            return isExecutable(chosen) ? chosen : nil
         }
         for directory in augmentedPATH(environment: environment).split(separator: ":") {
             let candidate = URL(fileURLWithPath: String(directory))
                 .appendingPathComponent(chosen, isDirectory: false)
                 .path
-            if fileManager.isExecutableFile(atPath: candidate) {
+            if isExecutable(candidate) {
                 return candidate
             }
         }

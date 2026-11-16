@@ -78,7 +78,8 @@ final class OpenCodeLocatorTests: XCTestCase {
 
         let fromPATH = OpenCodeLocator.resolveExecutable(
             configuredPath: nil,
-            environment: ["PATH": directory.path, "HOME": directory.path]
+            environment: ["PATH": directory.path, "HOME": directory.path],
+            isExecutable: { $0 == executable.path }
         )
         XCTAssertEqual(fromPATH, executable.path)
 
@@ -94,11 +95,32 @@ final class OpenCodeLocatorTests: XCTestCase {
     }
 
     func testResolveMissingCommandReturnsNil() {
+        var candidates: [String] = []
         XCTAssertNil(
             OpenCodeLocator.resolveExecutable(
                 configuredPath: nil,
-                environment: ["PATH": "/nonexistent", "HOME": "/tmp"]
+                environment: ["PATH": "/nonexistent", "HOME": "/tmp"],
+                isExecutable: { path in
+                    candidates.append(path)
+                    return false
+                }
             )
+        )
+        XCTAssertTrue(candidates.contains("/opt/homebrew/bin/opencode"))
+        XCTAssertTrue(candidates.contains("/nonexistent/opencode"))
+        XCTAssertTrue(candidates.allSatisfy { $0.hasSuffix("/opencode") })
+    }
+
+    func testResolvePrefersStandardLocationOverPATH() {
+        let preferred = "/opt/homebrew/bin/opencode"
+        let fromPATH = "/custom/bin/opencode"
+        XCTAssertEqual(
+            OpenCodeLocator.resolveExecutable(
+                configuredPath: nil,
+                environment: ["PATH": "/custom/bin", "HOME": "/Users/tester"],
+                isExecutable: { $0 == preferred || $0 == fromPATH }
+            ),
+            preferred
         )
     }
 

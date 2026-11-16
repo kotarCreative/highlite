@@ -24,5 +24,9 @@ let package = Package(
                 .process("Fixtures"),
             ]
         ),
+        .testTarget(
+            name: "HighliteMenuBarTests",
+            dependencies: ["HighliteMenuBar"]
+        ),
     ]
 )
