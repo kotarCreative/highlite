@@ -1,6 +1,6 @@
 # Jira issue recipe
 
-The built-in `jira-issue` recipe, version `1.1.0`, turns a compiled Highlite session
+The built-in `jira-issue` recipe, version `1.2.0`, turns a compiled Highlite session
 into a Jira issue using your custom prompt and the relay's **default AI provider**.
 It can draft automatically when a new upload compiles successfully, then either wait
 for you to review the issue or publish it automatically. **Review first** is the
@@ -42,11 +42,17 @@ and Create issues permissions for the destination project.
      review. This also applies when you manually regenerate a draft with the recipe
      configured for automatic publication.
 
-7. Review the outcome and data-sharing summary, choose **Enable this recipe**, and
+7. Optionally enable **Attach selected capture images to Jira**. This is off by default
+   and separate from **Share contact sheet with AI**. When enabled, the model receives a
+   server-owned list of stable image identifiers for this capture and may select up to
+   five PNGs (the contact sheet and/or individual keyframes) in the draft. The relay
+   uploads only those allowlisted files, after the issue has been created. Custom prompt
+   text cannot enable attachments when this setting is off.
+8. Review the outcome and data-sharing summary, choose **Enable this recipe**, and
    optionally enable **Automatically draft new sessions**, then choose **Save recipe**.
    Automatic drafting starts the flow when a new session compiles; with it off, you
-   can still start the flow manually for any ready session. Image sharing is a separate
-   opt-in and is off by default.
+   can still start the flow manually for any ready session. Image sharing with the AI
+   provider is a separate opt-in and is off by default.
 
 After the first save, **Recipes** keeps the same step-by-step editing experience.
 Reopening the page requires testing the saved connection again before continuing.
@@ -81,9 +87,10 @@ Select a session to see its **Jira issue** section. Existing sessions can use th
 generation button manually. The publication mode chosen when the draft was generated
 is shown with the destination and provider/model.
 
-- **Review first** stops at `draft`. Review the summary and description, edit as
-  necessary, save the changes, then choose **Publish to Jira** and confirm. Draft edits
-  and approvals carry a revision so a stale tab cannot publish changed content.
+- **Review first** stops at `draft`. Review the summary and description, adjust the
+  selected attachment images, edit as necessary, save the changes, then choose
+  **Publish to Jira** and confirm. Draft edits and approvals carry a revision so a stale
+  tab cannot publish changed content.
 - **Publish automatically** posts the validated draft immediately. There is no review
   step, so treat this as a deliberate automation setting rather than a convenience
   default. The issue uses the destination captured in that run's settings; later
@@ -92,7 +99,11 @@ is shown with the destination and provider/model.
 
 The result includes the Jira issue key and a link to the issue. Description text is
 converted deterministically to Atlassian Document Format paragraphs, not interpreted
-as HTML or executed as markup.
+as HTML or executed as markup. When attachment sharing is enabled and the draft selects
+images, Highlite first creates the issue, records that result, and then uploads the
+selected PNGs one at a time. Per-file upload results are shown in Sessions. A rejected
+or timed-out upload does not change the issue key, delete the issue, or cause a duplicate
+issue or an automatic upload retry.
 
 Each session has one recipe run. In review mode, **Regenerate Jira draft** replaces an
 unpublished draft and its edits with a new analysis using the current settings. In
@@ -117,20 +128,37 @@ draft.
   include narration/transcript and recorded interaction context. Capture content is
   treated as untrusted evidence, not instructions. Jira credentials are never sent
   to the model, and model output is restricted to summary/description strings.
-- Images are **off by default**. Opting in sends `contact-sheet.png` to the configured
-  model when available. Captured pixels are not automatically redacted; review the
-  capture surface before enabling this. The chosen model must support image inputs.
-- Raw audio, the original capture ZIP, and individual frame files are not uploaded by
-  this recipe. Jira receives the issue fields—reviewed, or automatically approved when
-  that mode is enabled—and a Highlite session identity property; it does not receive
-  the prompt, original bundle, or media attachments.
+- Sending images to the **AI provider** is **off by default**. Opting in sends
+  `contact-sheet.png` to the configured model when available. Captured pixels are not
+  automatically redacted; review the capture surface before enabling this. The chosen
+  model must support image inputs.
+- Sending images to **Jira** is a separate **off-by-default** setting. When enabled,
+  the model sees only stable identifiers and display names for `contact-sheet.png` and
+  the capture's keyframes. It may select at most five identifiers in the structured
+  draft; the server resolves them from the trusted compiled bundle. Arbitrary paths,
+  URLs, audio, ZIPs, form files, non-PNG files, symlinks, oversized files, duplicate
+  IDs, and unknown IDs are rejected. The model cannot select or upload files when the
+  setting is off, and prompt text cannot override that consent. The relay rechecks the
+  selection and current setting before publication. A reviewed draft can deselect images
+  before saving and publishing.
+- Attachment artifacts are limited to 4 MiB per file and 8 MiB combined, with at most
+  five selected images. The contact sheet and numbered keyframes are the only supported
+  attachment types. Jira can impose a lower site or project attachment limit, so a
+  successful issue creation does not guarantee that attachments will be accepted. The
+  account also needs Jira's **Create attachments** project permission.
+- Raw audio, the original capture ZIP, individual frame files outside the selected
+  attachment list, and private form data are not uploaded by this recipe. Jira receives
+  the issue fields—reviewed, or automatically approved when that mode is enabled—a
+  Highlite session identity property, and only the selected capture images when that
+  setting is enabled. It does not receive the prompt or original bundle.
 - OpenAI Chat Completions, Anthropic Messages, and OpenAI-compatible chat endpoints
   use a shared generation interface. Compatible servers need not support JSON mode;
   the recipe still validates the returned JSON locally. Unsupported models, refusals,
   truncated responses, and invalid drafts fail visibly rather than silently switching
-  providers, dropping requested images, or publishing malformed content.
+  providers, dropping requested images, or publishing malformed content. If the model
+  selects an attachment that is not in the server allowlist, no draft is accepted.
 - Each input text file is limited to 256 KiB and combined text to 512 KiB; the optional
-  contact sheet is limited to 4 MiB. Issue summaries are at most 255 characters and
+  AI contact sheet is limited to 4 MiB. Issue summaries are at most 255 characters and
   descriptions at most 32 KiB. Oversized evidence fails explicitly, not silently
   truncated. Provider-specific context/image limits can be lower.
 
@@ -162,10 +190,17 @@ carry a revision to prevent stale tabs from approving changed content.
   automatic mode this stops the run at review, allowing a deliberate manual retry after
   fixing the problem. To change destination fields, regenerate the draft after updating
   the recipe settings.
-- A timeout, network failure, 5xx, unexpected response, or restart during publication
-  leaves the run `publish-unknown`. **Check Jira manually** for an existing issue.
-  Highlite will not automatically retry or offer another create request for that run.
-  If no issue was created, create it manually from the saved draft in this first slice.
+- A timeout, network failure, 5xx, unexpected response, or restart during issue
+  creation leaves the run `publish-unknown`. **Check Jira manually** for an existing
+  issue. Highlite will not automatically retry or offer another create request for that
+  run. If no issue was created, create it manually from the saved draft in this first
+  slice.
+- Once an issue key is recorded, attachment uploads are independent of issue creation.
+  An ambiguous upload is marked `unknown`; other rejected files are marked `failed`, and
+  the run stays `published` with its issue key. Highlite never uploads the same selection
+  again automatically, and republishing a completed run returns the recorded result.
+  After a restart, interrupted attachment uploads are marked unconfirmed rather than
+  retried. Check the issue before manually adding files.
 - Interrupted queued/analyzing runs become `failed` on restart and can be regenerated
   manually. Automatic publication does not resume after a restart. Drafts and published
   results survive restarts. Missing work is not automatically backfilled after an
@@ -183,11 +218,12 @@ carry a revision to prevent stale tabs from approving changed content.
 | POST   | `/v1/recipes/jira-issue/issue-types`           | Load `{siteUrl, email, apiToken?, projectKey}`; return `issueTypes`       |
 | GET    | `/v1/sessions/{id}/recipes/jira-issue`         | Return `{run}` (`null` if none)                                           |
 | POST   | `/v1/sessions/{id}/recipes/jira-issue`         | Generate/retry/regenerate a draft; may publish automatically; `202`       |
-| POST   | `/v1/sessions/{id}/recipes/jira-issue/draft`   | Save `{revision, draft: {summary, description}}`                          |
+| POST   | `/v1/sessions/{id}/recipes/jira-issue/draft`   | Save `{revision, draft: {summary, description, attachments}}`             |
 | POST   | `/v1/sessions/{id}/recipes/jira-issue/publish` | Approve `{revision}` for publication; `202`, then poll the run            |
 
 `settings` has the following shape. Omit `apiToken` on updates to preserve the token
-for the same account; never embed it in a URL or command argument.
+for the same account; never embed it in a URL or command argument. `attachImages`
+defaults to `false` when an older saved setting or run omits it.
 
 Both discovery endpoints require the read token and a loopback bind. They can use
 matching saved credentials even when the recipe is disabled, and never persist the
@@ -203,6 +239,7 @@ and `nextPage` URLs are never followed. Errors omit upstream response bodies and
     "autoDraft": true,
     "publishMode": "review",
     "includeImages": false,
+    "attachImages": false,
     "prompt": "Draft an evidence-backed bug report with reproduction steps.",
     "jira": {
       "siteUrl": "https://team.atlassian.net",
@@ -220,14 +257,17 @@ and `nextPage` URLs are never followed. Errors omit upstream response bodies and
 
 `pnpm check` includes mocked-network tests for automatic drafting, both publication
 modes, prompt/provider resolution, output validation, review revisions, one-time
-publication, Jira formatting, credential redaction, and ambiguous failures.
+publication, Jira formatting, credential redaction, ambiguous failures, attachment
+consent and allowlists, multipart uploads, and attachment failures after issue creation.
 `pnpm test:recipes` drives the actual relay UI in Chromium against local fake AI/Jira
 endpoints—no live credentials or paid model calls are needed. Real Jira tenant
-configuration and model compatibility still need verification with your own connections.
+configuration, site attachment limits, and model compatibility still need verification
+with your own connections.
 
 Protocol references:
 
 - [Jira Cloud create issue](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-post)
+- [Jira Cloud add attachment](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-attachments/#api-rest-api-3-issue-issueidorkey-attachments-post)
 - [Jira Cloud basic authentication](https://developer.atlassian.com/cloud/jira/platform/basic-auth-for-rest-apis/)
 - [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/)
 - [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create)

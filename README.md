@@ -215,8 +215,9 @@ LLM requests. See
 Open **Recipes** to configure the first built-in flow: a custom prompt analyzes new
 compiled sessions with the default AI provider and prepares a Jira Cloud issue. Choose
 **Review first** to edit and approve each draft, or **Publish automatically** to create
-issues without a review step. Images are opt-in; Jira credentials are stored in the
-same private central config folder. See [the Jira recipe guide](docs/jira-recipe.md)
+issues without a review step. Sharing images with the AI provider and uploading selected
+capture images to Jira are separate opt-ins; Jira credentials are stored in the same
+private central config folder. See [the Jira recipe guide](docs/jira-recipe.md)
 for setup, data sharing, and failure handling.
 
 ### Native macOS app and OpenCode routing

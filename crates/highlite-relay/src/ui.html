@@ -108,6 +108,13 @@
                 ><label
                   >Issue description<textarea id="recipe-description" required rows="12"></textarea>
                 </label>
+                <fieldset id="recipe-attachment-options" class="recipe-attachments" hidden>
+                  <legend>Jira attachments</legend>
+                  <p class="hint">
+                    Selected capture images are uploaded to Jira after the issue is created.
+                  </p>
+                  <div id="recipe-attachment-list" class="recipe-attachment-list"></div>
+                </fieldset>
                 <div class="actions">
                   <button id="recipe-draft-save" type="button">Save draft changes</button
                   ><button id="recipe-publish" class="primary" type="button">
@@ -115,6 +122,7 @@
                   </button>
                 </div>
               </form>
+              <ul id="recipe-attachment-results" class="recipe-attachment-results" hidden></ul>
               <p><a id="recipe-issue-link" target="_blank" rel="noreferrer" hidden></a></p>
               <h3>Pipelines</h3>
               <p id="pipeline-hint" class="hint"></p>
@@ -354,6 +362,16 @@
                     ></span
                   ></label
                 >
+                <label class="settings-row"
+                  ><input id="recipe-attachments" type="checkbox" /><span
+                    ><strong>Attach selected capture images to Jira</strong
+                    ><span class="field-help"
+                      >Off by default. When enabled, the AI may choose up to five allowlisted PNG
+                      images from this capture; those files are uploaded to Jira after the issue is
+                      created. This is separate from sharing images with the AI provider.</span
+                    ></span
+                  ></label
+                >
               </section>
               <section
                 class="form-section"
@@ -409,8 +427,9 @@
                   <p class="notice info">
                     AI receives the session summary, structured bundle, and capture analysis when
                     drafting. Raw audio and Jira credentials are never sent to the model. Jira
-                    receives only the generated or reviewed issue, static fields, and session
-                    identity.
+                    receives the generated or reviewed issue, static fields, session identity, and
+                    only the capture images you allow and select for attachment. Raw audio, the
+                    original capture, and private form files are never attached.
                   </p>
                 </details>
               </section>
@@ -1022,6 +1041,7 @@
           $('recipe-auto').checked = settings.autoDraft;
           $('recipe-publish-mode').value = settings.publishMode || 'review';
           $('recipe-images').checked = settings.includeImages;
+          $('recipe-attachments').checked = Boolean(settings.attachImages);
           updateTokenRequirement();
           updatePublishMode();
           updateRecipeSummary();
@@ -1327,6 +1347,7 @@
             autoDraft: $('recipe-auto').checked,
             publishMode: $('recipe-publish-mode').value,
             includeImages: $('recipe-images').checked,
+            attachImages: $('recipe-attachments').checked,
             prompt: $('recipe-prompt').value,
             jira: {
               siteUrl: $('jira-site').value.trim(),
@@ -1422,6 +1443,8 @@
         $('recipe-description').value = run?.draft?.description || '';
         $('recipe-summary').readOnly = !editable;
         $('recipe-description').readOnly = !editable;
+        renderAttachmentOptions(run);
+        renderAttachmentResults(run);
         $('recipe-draft-save').disabled = true;
         $('recipe-publish').disabled = !editable;
         $('recipe-issue-link').hidden = !run?.issueUrl;
@@ -1429,6 +1452,61 @@
           $('recipe-issue-link').href = run.issueUrl;
           $('recipe-issue-link').textContent = `Open ${run.issueKey} in Jira`;
         }
+      }
+
+      function renderAttachmentOptions(run) {
+        const options = $('recipe-attachment-options');
+        const container = $('recipe-attachment-list');
+        const available = run?.availableAttachments || [];
+        container.replaceChildren();
+        options.hidden = !run?.draft || available.length === 0;
+        if (options.hidden) return;
+        const selected = new Set(run?.draft?.attachments || []);
+        const editable = run?.status === 'draft';
+        for (const choice of available) {
+          const label = document.createElement('label');
+          label.className = 'recipe-attachment';
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.value = choice.id;
+          input.checked = selected.has(choice.id);
+          input.disabled = !editable;
+          input.addEventListener('change', () => {
+            state.recipeDirty = true;
+            $('recipe-draft-save').disabled = false;
+            $('recipe-publish').disabled = true;
+          });
+          const name = document.createElement('span');
+          name.textContent = `${choice.name} · ${choice.id}`;
+          label.append(input, name);
+          container.append(label);
+        }
+      }
+
+      function renderAttachmentResults(run) {
+        const list = $('recipe-attachment-results');
+        const results = run?.attachmentResults || [];
+        list.replaceChildren();
+        list.hidden = results.length === 0;
+        for (const result of results) {
+          const item = document.createElement('li');
+          item.className = `recipe-attachment-result ${result.status}`;
+          const label = document.createElement('strong');
+          label.textContent = `${result.name} · ${result.status}`;
+          item.append(label);
+          if (result.error) {
+            const detail = document.createElement('span');
+            detail.textContent = ` ${result.error}`;
+            item.append(detail);
+          }
+          list.append(item);
+        }
+      }
+
+      function selectedAttachmentIds() {
+        return [...document.querySelectorAll('#recipe-attachment-list input:checked')].map(
+          (input) => input.value,
+        );
       }
 
       async function loadRecipeRun(sessionId) {
@@ -1443,7 +1521,13 @@
           )
             return;
           renderRecipeRun(body.run);
-          if (body.run && ['queued', 'analyzing', 'publishing'].includes(body.run.status)) {
+          const attachmentsPending = (body.run?.attachmentResults || []).some(
+            (result) => result.status === 'pending',
+          );
+          if (
+            body.run &&
+            (['queued', 'analyzing', 'publishing'].includes(body.run.status) || attachmentsPending)
+          ) {
             state.recipeTimer = setTimeout(() => void loadRecipeRun(sessionId), 1000);
           }
         } catch (error) {
@@ -1493,7 +1577,11 @@
         if (!run || !$('recipe-review').reportValidity()) return;
         const input = {
           revision: run.revision,
-          draft: { summary: $('recipe-summary').value, description: $('recipe-description').value },
+          draft: {
+            summary: $('recipe-summary').value,
+            description: $('recipe-description').value,
+            attachments: selectedAttachmentIds(),
+          },
         };
         $('recipe-draft-save').disabled = true;
         try {
@@ -1514,7 +1602,7 @@
           !run ||
           state.recipeDirty ||
           !confirm(
-            `Create an issue in Jira project ${run.settings.jira.projectKey} at ${run.settings.jira.siteUrl}?\n\n${run.draft.summary}`,
+            `Create an issue in Jira project ${run.settings.jira.projectKey} at ${run.settings.jira.siteUrl}?${run.draft.attachments?.length ? `\n\n${run.draft.attachments.length} selected capture image(s) will be uploaded after the issue is created.` : ''}\n\n${run.draft.summary}`,
           )
         )
           return;

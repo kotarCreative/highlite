@@ -29,6 +29,12 @@ let browser;
 let aiCalls = 0;
 const issues = [];
 let metadataFailure = false;
+let aiAttachmentIds = [];
+const attachmentUploads = [];
+const onePixelPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
 let connectionDelay = 0;
 let issueTypeDelay = 0;
 let issueTypeDelayProject = '';
@@ -97,29 +103,48 @@ const remote = httpServer(async (request, response) => {
   }
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
-  const input = JSON.parse(Buffer.concat(chunks).toString());
+  const body = Buffer.concat(chunks);
   response.setHeader('Content-Type', 'application/json');
   if (request.url === '/v1/chat/completions') {
+    const input = JSON.parse(body.toString());
     aiCalls += 1;
     assert.ok(input.messages[0].content.includes('Focus on usability defects'));
     assert.ok(!JSON.stringify(input).includes('jira-smoke-secret'));
+    const draft = {
+      summary: 'Captured usability defect',
+      description:
+        'Observed: the action failed.\nEvidence: captured narration.\nExpected behavior is not evidenced.',
+    };
+    if (aiAttachmentIds.length) draft.attachments = aiAttachmentIds;
     response.end(
       JSON.stringify({
         choices: [
           {
             finish_reason: 'stop',
-            message: {
-              content: JSON.stringify({
-                summary: 'Captured usability defect',
-                description:
-                  'Observed: the action failed.\nEvidence: captured narration.\nExpected behavior is not evidenced.',
-              }),
-            },
+            message: { content: JSON.stringify(draft) },
           },
         ],
       }),
     );
+  } else if (/^\/rest\/api\/3\/issue\/[^/]+\/attachments$/.test(request.url)) {
+    assert.equal(request.url, `/rest/api/3/issue/TEAM-${issues.length}/attachments`);
+    assert.equal(request.headers['x-atlassian-token'], 'no-check');
+    assert.equal(
+      request.headers.authorization,
+      `Basic ${Buffer.from('tester@example.com:jira-smoke-secret').toString('base64')}`,
+    );
+    const contentType = request.headers['content-type'];
+    assert.ok(contentType.startsWith('multipart/form-data; boundary='));
+    const boundary = contentType.split('boundary=')[1];
+    const headerEnd = body.indexOf('\r\n\r\n') + 4;
+    const headers = body.subarray(0, headerEnd).toString();
+    assert.ok(headers.includes('name="file"'));
+    const filename = headers.split('filename="')[1].split('"')[0];
+    const end = body.indexOf(Buffer.from(`\r\n--${boundary}`), headerEnd);
+    attachmentUploads.push({ filename, bytes: body.subarray(headerEnd, end) });
+    response.end(JSON.stringify([{ id: `attachment-${attachmentUploads.length}` }]));
   } else {
+    const input = JSON.parse(body.toString());
     assert.equal(request.url, '/rest/api/3/issue');
     assert.equal(
       request.headers.authorization,
@@ -301,6 +326,7 @@ try {
   await page
     .getByLabel('Custom analysis prompt')
     .fill('Focus on usability defects and preserve evidence references.');
+  await page.getByLabel('Attach selected capture images to Jira').check();
   await page
     .locator('#recipe-provider-summary')
     .filter({ hasText: /local.*test-model/ })
@@ -362,10 +388,16 @@ try {
   const fixture = JSON.parse(
     await readFile(new URL('../fixtures/capture.json', import.meta.url), 'utf8'),
   );
-  async function uploadSession(sessionId) {
-    const manifest = { ...fixture.manifest, sessionId, keyframes: [] };
+  async function uploadSession(sessionId, withImages = false) {
+    const manifest = {
+      ...fixture.manifest,
+      sessionId,
+      keyframes: withImages ? fixture.manifest.keyframes : [],
+    };
     const zip = new JSZip();
     zip.file('manifest.json', JSON.stringify(manifest));
+    if (withImages)
+      for (const keyframe of manifest.keyframes) zip.file(keyframe.imagePath, onePixelPng);
     const response = await fetch(`http://${address}/v1/sessions`, {
       method: 'POST',
       headers: { Authorization: 'Bearer smoke-ingest', 'Content-Type': 'application/zip' },
@@ -373,13 +405,30 @@ try {
     });
     assert.equal(response.status, 201, await response.text());
   }
-  await uploadSession('jira-browser-smoke');
+  aiAttachmentIds = ['contact-sheet', 'frame-01'];
+  await uploadSession('jira-browser-smoke', true);
   await openSessions();
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await page.locator('.session[data-id="jira-browser-smoke"]').click();
   await page.getByText('Jira recipe: draft', { exact: true }).waitFor();
   assert.equal(aiCalls, 1);
   assert.equal(issues.length, 0);
+  const attachmentOptions = page.locator('#recipe-attachment-list input[type="checkbox"]');
+  assert.ok((await attachmentOptions.count()) >= 2);
+  const attachmentIDs = await attachmentOptions.evaluateAll((nodes) =>
+    nodes.map((node) => node.value),
+  );
+  assert.ok(attachmentIDs.includes('contact-sheet'));
+  assert.ok(attachmentIDs.includes('frame-01'));
+  assert.equal(
+    await page.locator('#recipe-attachment-list input[value="contact-sheet"]').isChecked(),
+    true,
+  );
+  assert.equal(
+    await page.locator('#recipe-attachment-list input[value="frame-01"]').isChecked(),
+    true,
+  );
+  await page.locator('#recipe-attachment-list input[value="contact-sheet"]').uncheck();
   await page.getByLabel('Issue summary', { exact: true }).fill('Reviewed usability defect');
   assert.equal(
     await page.getByRole('button', { name: 'Publish to Jira', exact: true }).isDisabled(),
@@ -390,7 +439,11 @@ try {
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Publish to Jira', exact: true }).click();
   await page.getByRole('link', { name: 'Open TEAM-1 in Jira', exact: true }).waitFor();
+  await page.getByText('frame-01.png · uploaded', { exact: true }).waitFor();
   assert.equal(issues.length, 1);
+  assert.equal(attachmentUploads.length, 1);
+  assert.equal(attachmentUploads[0].filename, 'frame-01.png');
+  assert.equal(attachmentUploads[0].bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.equal(issues[0].fields.summary, 'Reviewed usability defect');
   assert.equal(issues[0].fields.description.type, 'doc');
   assert.equal(issues[0].fields.project.key, 'TEAM');
@@ -402,8 +455,10 @@ try {
   await page.reload();
   await page.locator('.session[data-id="jira-browser-smoke"]').click();
   await page.getByRole('link', { name: 'Open TEAM-1 in Jira', exact: true }).waitFor();
+  await page.getByText('frame-01.png · uploaded', { exact: true }).waitFor();
   assert.equal(aiCalls, 1);
   assert.equal(issues.length, 1);
+  assert.equal(attachmentUploads.length, 1);
   await openRecipes();
   await checkpoint('recipe-edit-desktop');
   await page.getByRole('heading', { name: 'Connect Jira', exact: true }).waitFor();
@@ -433,6 +488,7 @@ try {
   await assertView(page, 'recipes');
   assert.equal(await page.getByLabel('After drafting').inputValue(), 'automatic');
   assert.equal(await page.getByLabel('Jira site URL').inputValue(), remoteUrl);
+  assert.equal(await page.getByLabel('Attach selected capture images to Jira').isChecked(), true);
   await page.getByRole('button', { name: 'Save recipe', exact: true }).click();
   await page
     .locator('#recipe-config-message')
@@ -453,14 +509,17 @@ try {
   assert.equal(await page.getByLabel('After drafting').inputValue(), 'automatic');
   await page.waitForFunction(() => !document.getElementById('recipe-config-form').inert);
   await checkpoint('recipe-edit-after-save');
-  await uploadSession('jira-auto-smoke');
+  await uploadSession('jira-auto-smoke', true);
   await openSessions();
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await page.locator('.session[data-id="jira-auto-smoke"]').click();
   await page.getByText('Jira recipe: published', { exact: true }).waitFor();
   await page.getByRole('link', { name: 'Open TEAM-2 in Jira', exact: true }).waitFor();
+  await page.getByText('contact-sheet.png · uploaded', { exact: true }).waitFor();
+  await page.getByText('frame-01.png · uploaded', { exact: true }).waitFor();
   assert.equal(aiCalls, 2);
   assert.equal(issues.length, 2);
+  assert.equal(attachmentUploads.length, 3);
   assert.equal(issues[1].fields.summary, 'Captured usability defect');
   await openRecipes();
   await page.setViewportSize({ width: 390, height: 844 });

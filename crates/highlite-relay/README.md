@@ -210,8 +210,10 @@ the default AI provider and can automatically draft issues for new sessions. Cho
 **Review first** to edit and approve the draft, or **Publish automatically** to create
 the Jira Cloud issue without review. Configure it from **Recipes** in the local UI; no
 shell pipeline is required. It is disabled by default. Jira credentials live in the
-private central config folder, separate from captured sessions and run output. Images
-are opt-in, and ambiguous publication failures are never automatically retried.
+private central config folder, separate from captured sessions and run output. AI image
+sharing and Jira attachment uploads are separate opt-ins; attachment source files are
+resolved from a server-owned allowlist of capture PNGs. Ambiguous issue-creation and
+attachment-upload failures are never automatically retried.
 
 See [the Jira recipe guide](../../docs/jira-recipe.md) for setup, HTTP endpoints,
 credentials, supported models, data sharing, and recovery behavior.
