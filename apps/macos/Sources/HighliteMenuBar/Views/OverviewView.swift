@@ -16,19 +16,15 @@ struct OverviewView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Highlite")
-                            .font(.system(size: 30, weight: .semibold))
-                        Text("Local capture relay and reviewed AI recipes")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
+            VStack(alignment: .leading, spacing: DashboardStyle.sectionSpacing) {
+                PageHeader(
+                    "Highlite",
+                    subtitle: "Local capture relay and reviewed AI recipes"
+                ) {
                     StatusPill(text: model.relay.phase.label, color: model.relay.phase.color)
                 }
 
-                Card("Relay") {
+                Card("Relay", icon: "bolt") {
                     HStack(alignment: .top, spacing: 20) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(model.relay.detail)
@@ -73,7 +69,7 @@ struct OverviewView: View {
                         }
                     }
 
-                    HStack(spacing: 10) {
+                    HStack(spacing: DashboardStyle.controlSpacing) {
                         CopyButton(title: "Copy relay URL", value: model.relay.baseURL.absoluteString)
                         CopyButton(
                             title: "Copy ingest token",
@@ -88,53 +84,61 @@ struct OverviewView: View {
                     }
                 }
 
-                Card("Site embed") {
-                    Text(
-                        "Copy a script-tag snippet that sends captures to this relay. Serve the built SDK (packages/sdk/dist/highlite.iife.js) from the site at the asset path below, or change the path to match your site."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Card("Site embed", icon: "chevron.left.forwardslash.chevron.right") {
+                    Text("Add a script tag that sends captures from your site to this relay.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
 
-                    HStack(spacing: 10) {
-                        TextField("SDK asset path", text: $embedAssetPath)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 360)
-                        CopyButton(
-                            title: "Copy embed script",
-                            value: embedScript,
-                            help: "Copies a script-tag snippet for this relay URL and ingest token."
-                        )
-                        Spacer()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("SDK asset path")
+                            .font(.caption.weight(.semibold))
+                        HStack(spacing: DashboardStyle.controlSpacing) {
+                            TextField("SDK asset path", text: $embedAssetPath)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(minWidth: 220, maxWidth: 360)
+                            CopyButton(
+                                title: "Copy embed script",
+                                value: embedScript,
+                                help: "Copies a script-tag snippet for this relay URL and ingest token."
+                            )
+                            Spacer(minLength: 0)
+                        }
+                        Text("Serve packages/sdk/dist/highlite.iife.js at this path, or use a full asset URL.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     if let embedScript {
-                        DisclosureGroup("Preview script") {
-                            Text(embedScript)
-                                .font(.system(.caption2, design: .monospaced))
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        DisclosureGroup {
+                            CodeBlock(text: embedScript)
+                                .padding(.top, 4)
+                        } label: {
+                            Text("Preview script")
+                                .font(.caption.weight(.semibold))
                         }
-                        .font(.caption)
                     } else if model.ingestToken == nil {
-                        Text("Start the relay to create the ingest token used by the embed script.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Label(
+                            "Start the relay to create the ingest token used by the embed script.",
+                            systemImage: "info.circle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     } else {
-                        Text("Enter a valid SDK asset path or URL.")
+                        Label("Enter a valid SDK asset path or URL.", systemImage: "exclamationmark.triangle")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.orange)
                     }
 
-                    Text(
-                        "Add the site's exact origin in Settings before capturing. The ingest token is visible to the browser and should be scoped to this relay."
+                    Label(
+                        "The ingest token is visible to the browser. Add this site's exact origin in Settings before capturing.",
+                        systemImage: "lock.shield"
                     )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 }
 
-                HStack(alignment: .top, spacing: 14) {
-                    Card("Pending review") {
+                HStack(alignment: .top, spacing: DashboardStyle.sectionSpacing) {
+                    Card("Pending review", icon: "tray.full") {
                         Text("\(model.pendingCount)")
                             .font(.system(size: 36, weight: .semibold, design: .rounded))
                         Text(
@@ -153,7 +157,7 @@ struct OverviewView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Card("Setup") {
+                    Card("Setup", icon: "slider.horizontal.3") {
                         LabeledContent("Captures", value: "\(model.sessions.count)")
                         LabeledContent(
                             "Providers",
@@ -175,7 +179,7 @@ struct OverviewView: View {
                     }
                 }
 
-                Card("Privacy and targeting") {
+                Card("Privacy and targeting", icon: "lock.shield") {
                     Text(
                         "Highlite never looks at the focused application. OpenCode routing uses only bounded capture text and candidate session metadata, then waits for your confirmation in a native window."
                     )
@@ -186,23 +190,22 @@ struct OverviewView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Card("Relay log") {
+                Card("Relay log", icon: "text.alignleft") {
                     if model.relayLogs.isEmpty {
                         Text("No relay output captured yet.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     } else {
-                        ScrollView {
-                            Text(model.relayLogs.suffix(80).joined(separator: "\n"))
-                                .font(.system(size: 11, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(height: 150)
+                        CodeBlock(
+                            text: model.relayLogs.suffix(80).joined(separator: "\n"),
+                            scrolls: true,
+                            minHeight: 150,
+                            maxHeight: 150
+                        )
                     }
                 }
             }
-            .padding(18)
+            .padding(DashboardStyle.pagePadding)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task {

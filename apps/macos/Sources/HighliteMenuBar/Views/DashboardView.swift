@@ -21,11 +21,15 @@ struct DashboardView: View {
                 Label(section.title, systemImage: section.icon)
                     .tag(section)
             }
+            .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(
                 min: AppWindowLayout.sidebarMinimumWidth,
                 ideal: AppWindowLayout.sidebarIdealWidth,
                 max: AppWindowLayout.sidebarMaximumWidth
             )
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                SidebarRelayStatus(model: model)
+            }
         } detail: {
             VStack(spacing: 0) {
                 if let error = model.errorMessage {
@@ -64,5 +68,35 @@ struct DashboardView: View {
             )
         }
         .navigationTitle("Highlite")
+    }
+}
+
+private struct SidebarRelayStatus: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(model.relay.phase.color)
+                .frame(width: 7, height: 7)
+            Text(model.relay.phase.label)
+                .font(.caption.weight(.medium))
+            Spacer(minLength: 4)
+            if let version = model.relay.relayVersion {
+                Text("v\(version)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.thinMaterial)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Relay \(model.relay.phase.label)")
     }
 }
