@@ -8,45 +8,44 @@ struct ProvidersView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("AI providers")
-                        .font(.title3.weight(.semibold))
-                    Text("Provider settings are loopback-only. Saving does not verify credentials.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    editor = ProviderDraft(
-                        isNew: true,
-                        providerId: "",
-                        hasStoredKey: false,
-                        originalKind: .openai,
-                        originalBaseUrl: "",
-                        kind: .openai,
-                        model: "",
-                        baseUrl: "",
-                        makeDefault: model.providers?.providers.isEmpty ?? true
-                    )
-                } label: {
-                    Label("Add provider", systemImage: "plus")
-                }
-                Button {
-                    Task { await model.refreshProviders() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+            PageHeader(
+                "AI providers",
+                subtitle: "Provider settings are loopback-only. Saving does not verify credentials."
+            ) {
+                HStack(spacing: 12) {
+                    Button {
+                        editor = ProviderDraft(
+                            isNew: true,
+                            providerId: "",
+                            hasStoredKey: false,
+                            originalKind: .openai,
+                            originalBaseUrl: "",
+                            kind: .openai,
+                            model: "",
+                            baseUrl: "",
+                            makeDefault: model.providers?.providers.isEmpty ?? true
+                        )
+                    } label: {
+                        Label("Add provider", systemImage: "plus")
+                    }
+                    Button {
+                        Task { await model.refreshProviders() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
                 }
             }
-            .padding(16)
+            .padding(.horizontal, DashboardStyle.pagePadding)
+            .padding(.vertical, DashboardStyle.headerVerticalPadding)
             Divider()
 
             if model.providers?.enabled == false {
                 EmptyHint(
                     title: "Provider management disabled",
-                    detail: "The relay is not bound to loopback, so remote provider configuration is refused."
+                    detail: "The relay is not bound to loopback, so remote provider configuration is refused.",
+                    systemImage: "lock"
                 )
-                .padding()
+                .padding(DashboardStyle.pagePadding)
                 Spacer()
             } else if let providers = model.providers?.providers, !providers.isEmpty {
                 List {
@@ -108,9 +107,10 @@ struct ProvidersView: View {
             } else {
                 EmptyHint(
                     title: "No providers configured",
-                    detail: "Add an OpenAI, Anthropic, or OpenAI-compatible connection. Live Jira and OpenCode recipes need a default provider."
+                    detail: "Add an OpenAI, Anthropic, or OpenAI-compatible connection. Live Jira and OpenCode recipes need a default provider.",
+                    systemImage: "sparkles"
                 )
-                .padding()
+                .padding(DashboardStyle.pagePadding)
                 Spacer()
             }
         }

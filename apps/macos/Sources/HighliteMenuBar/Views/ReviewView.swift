@@ -26,14 +26,10 @@ struct ReviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Confirm OpenCode send")
-                        .font(.title2.weight(.semibold))
-                    Text("Nothing has been sent automatically.")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
+            PageHeader(
+                "Confirm OpenCode send",
+                subtitle: "Nothing has been sent automatically."
+            ) {
                 StatusPill(text: request.run.status.label, color: request.run.status.color)
             }
 
@@ -115,18 +111,13 @@ struct ReviewView: View {
                 CopyButton(title: "Copy prompt", value: request.run.promptPreview)
             }
 
-            ScrollView {
-                Text(request.run.promptPreview.isEmpty ? "No prompt text is stored for this run." : request.run.promptPreview)
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-            }
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.primary.opacity(0.15))
-            }
+            CodeBlock(
+                text: request.run.promptPreview.isEmpty
+                    ? "No prompt text is stored for this run."
+                    : request.run.promptPreview,
+                scrolls: true,
+                minHeight: 160
+            )
 
             if let error = model.reviewError {
                 Text(error)
@@ -159,7 +150,7 @@ struct ReviewView: View {
                 )
             }
         }
-        .padding(18)
+        .padding(DashboardStyle.pagePadding)
         .frame(minWidth: 780, minHeight: 660)
         .alert("Send this exact prompt?", isPresented: $showSendConfirmation) {
             Button("Cancel", role: .cancel) {}

@@ -16,10 +16,10 @@ struct SessionsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Captured sessions")
-                    .font(.title3.weight(.semibold))
-                Spacer()
+            PageHeader(
+                "Captured sessions",
+                subtitle: "Review captures, Jira drafts, and OpenCode suggestions."
+            ) {
                 Button {
                     Task { await model.refreshSessions() }
                 } label: {
@@ -27,17 +27,18 @@ struct SessionsView: View {
                 }
                 .disabled(!model.relay.isRunning)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, DashboardStyle.pagePadding)
+            .padding(.vertical, DashboardStyle.headerVerticalPadding)
 
             Divider()
 
             if model.sessions.isEmpty {
                 EmptyHint(
                     title: "No captures yet",
-                    detail: "Upload a browser capture to the relay. Sessions appear here after compilation."
+                    detail: "Upload a browser capture to the relay. Sessions appear here after compilation.",
+                    systemImage: "rectangle.stack"
                 )
-                .padding()
+                .padding(DashboardStyle.pagePadding)
                 Spacer()
             } else {
                 HSplitView {
@@ -58,7 +59,8 @@ struct SessionsView: View {
                     } else {
                         EmptyHint(
                             title: "Select a session",
-                            detail: "Open a capture to review Jira drafts and OpenCode suggestions."
+                            detail: "Open a capture to review Jira drafts and OpenCode suggestions.",
+                            systemImage: "sidebar.left"
                         )
                         .frame(minWidth: 480, maxHeight: .infinity)
                     }
@@ -153,7 +155,7 @@ private struct SessionDetailView: View {
                 JiraRunSection(model: model, session: session)
                 OpenCodeRunSection(model: model, session: session)
             }
-            .padding(18)
+            .padding(DashboardStyle.pagePadding)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: session.sessionId) {

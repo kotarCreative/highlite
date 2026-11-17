@@ -15,15 +15,10 @@ struct JiraRecipeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Jira issue recipe")
-                            .font(.title3.weight(.semibold))
-                        Text("Capture → AI draft → review → Jira. Connection tests and choices use the live Jira API.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
+                PageHeader(
+                    "Jira issue recipe",
+                    subtitle: "Capture → AI draft → review → Jira. Connection tests and choices use the live Jira API."
+                ) {
                     StatusPill(
                         text: settings.enabled ? "Enabled" : "Disabled",
                         color: settings.enabled ? .green : .secondary
@@ -180,7 +175,7 @@ struct JiraRecipeView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(18)
+            .padding(DashboardStyle.pagePadding)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task {

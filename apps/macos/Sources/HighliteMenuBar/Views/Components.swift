@@ -101,6 +101,7 @@ struct CopyButton: View {
             Label(label, systemImage: icon)
         }
         .disabled(value?.isEmpty != false)
+        .frame(minWidth: DashboardStyle.copyButtonMinimumWidth)
         .help(helpText)
         .accessibilityHint(Text(helpText))
         .onDisappear {
@@ -148,39 +149,137 @@ struct CopyButton: View {
     }
 }
 
+struct PageHeader<Trailing: View>: View {
+    let title: String
+    let subtitle: String?
+    let trailing: Trailing
+
+    init(_ title: String, subtitle: String? = nil, @ViewBuilder trailing: () -> Trailing) {
+        self.title = title
+        self.subtitle = subtitle
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 12)
+            trailing
+        }
+    }
+}
+
+extension PageHeader where Trailing == EmptyView {
+    init(_ title: String, subtitle: String? = nil) {
+        self.init(title, subtitle: subtitle) {
+            EmptyView()
+        }
+    }
+}
+
 struct Card<Content: View>: View {
     let title: String?
+    let icon: String?
     let content: Content
 
-    init(_ title: String? = nil, @ViewBuilder content: () -> Content) {
+    init(
+        _ title: String? = nil,
+        icon: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
         self.title = title
+        self.icon = icon
         self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DashboardStyle.controlSpacing) {
             if let title {
-                Text(title)
-                    .font(.headline)
+                HStack(spacing: 7) {
+                    if let icon {
+                        Image(systemName: icon)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(title)
+                        .font(.headline)
+                }
             }
             content
         }
-        .padding(14)
+        .padding(DashboardStyle.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: DashboardStyle.cardCornerRadius)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.primary.opacity(0.08))
+            RoundedRectangle(cornerRadius: DashboardStyle.cardCornerRadius)
+                .strokeBorder(Color(nsColor: .separatorColor))
         }
+    }
+}
+
+struct CodeBlock: View {
+    let text: String
+    var scrolls = false
+    var minHeight: CGFloat? = nil
+    var maxHeight: CGFloat? = nil
+
+    var body: some View {
+        Group {
+            if scrolls {
+                ScrollView {
+                    code
+                }
+            } else {
+                code
+            }
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: minHeight,
+            maxHeight: maxHeight,
+            alignment: .topLeading
+        )
+        .background(
+            Color(nsColor: .textBackgroundColor),
+            in: RoundedRectangle(cornerRadius: DashboardStyle.codeCornerRadius)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: DashboardStyle.codeCornerRadius)
+                .strokeBorder(Color(nsColor: .separatorColor))
+        }
+    }
+
+    private var code: some View {
+        Text(text)
+            .font(.system(size: DashboardStyle.codeFontSize, design: .monospaced))
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
     }
 }
 
 struct EmptyHint: View {
     let title: String
     let detail: String
+    var systemImage = "sparkles"
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(.tertiary)
             Text(title)
                 .font(.headline)
             Text(detail)
@@ -188,7 +287,8 @@ struct EmptyHint: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity, minHeight: 120)
+        .padding(20)
+        .frame(maxWidth: .infinity, minHeight: DashboardStyle.emptyStateMinimumHeight)
     }
 }
 

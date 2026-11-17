@@ -10,15 +10,10 @@ struct OpenCodeRecipeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("OpenCode session recipe")
-                            .font(.title3.weight(.semibold))
-                        Text("Suggests an existing OpenCode session. It never creates a session or sends a prompt automatically.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
+                PageHeader(
+                    "OpenCode session recipe",
+                    subtitle: "Suggests an existing OpenCode session. It never creates a session or sends a prompt automatically."
+                ) {
                     StatusPill(
                         text: settings.enabled ? "Enabled" : "Disabled",
                         color: settings.enabled ? .green : .secondary
@@ -180,7 +175,7 @@ struct OpenCodeRecipeView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(18)
+            .padding(DashboardStyle.pagePadding)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task {

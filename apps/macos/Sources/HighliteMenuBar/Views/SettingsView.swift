@@ -15,13 +15,10 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Settings")
-                        .font(.title3.weight(.semibold))
-                    Text("The relay listens on loopback. Existing relay tokens and unrelated env settings are preserved.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                PageHeader(
+                    "Settings",
+                    subtitle: "The relay listens on loopback. Existing relay tokens and unrelated env settings are preserved."
+                )
 
                 Form {
                     Section("Local relay") {
@@ -120,7 +117,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(18)
+            .padding(DashboardStyle.pagePadding)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task {

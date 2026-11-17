@@ -6,41 +6,43 @@ struct ActivityView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Recipe activity")
-                        .font(.title3.weight(.semibold))
-                    Text("Metadata only: no drafts, prompts, candidate lists, or capture summaries.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            PageHeader(
+                "Recipe activity",
+                subtitle: "Metadata only: no drafts, prompts, candidate lists, or capture summaries."
+            ) {
+                HStack(spacing: 12) {
+                    if let last = model.lastPollAt {
+                        Text("Updated \(Display.relative(Int64(last.timeIntervalSince1970 * 1000)))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button {
+                        Task { await model.refreshActivity() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(!model.relay.isRunning)
                 }
-                Spacer()
-                if let last = model.lastPollAt {
-                    Text("Updated \(Display.relative(Int64(last.timeIntervalSince1970 * 1000)))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Button {
-                    Task { await model.refreshActivity() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(!model.relay.isRunning)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, DashboardStyle.pagePadding)
+            .padding(.vertical, DashboardStyle.headerVerticalPadding)
 
             Divider()
 
             if let error = model.activityError {
-                EmptyHint(title: "Activity unavailable", detail: error)
-                    .padding()
+                EmptyHint(
+                    title: "Activity unavailable",
+                    detail: error,
+                    systemImage: "exclamationmark.triangle"
+                )
+                .padding(DashboardStyle.pagePadding)
             } else if model.activity.isEmpty {
                 EmptyHint(
                     title: "No recipe activity",
-                    detail: "Jira drafts and OpenCode suggestions appear here after a capture is processed."
+                    detail: "Jira drafts and OpenCode suggestions appear here after a capture is processed.",
+                    systemImage: "clock.arrow.circlepath"
                 )
-                .padding()
+                .padding(DashboardStyle.pagePadding)
             } else {
                 List(model.activity) { item in
                     HStack(alignment: .top, spacing: 12) {
