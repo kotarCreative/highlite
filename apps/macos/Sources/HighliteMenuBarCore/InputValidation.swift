@@ -176,6 +176,7 @@ public enum JiraInputNormalization {
             autoDraft: settings.autoDraft,
             publishMode: settings.publishMode,
             includeImages: settings.includeImages,
+            attachImages: settings.attachImages,
             prompt: settings.prompt,
             jira: target(settings.jira)
         )

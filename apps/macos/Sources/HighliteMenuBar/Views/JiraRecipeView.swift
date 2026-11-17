@@ -35,6 +35,10 @@ struct JiraRecipeView: View {
                             }
                         }
                         Toggle("Share capture images with the AI provider", isOn: $settings.includeImages)
+                        Toggle("Attach selected capture images to Jira", isOn: $settings.attachImages)
+                        Text("Off by default. When enabled, the AI may choose up to five allowlisted PNGs from the capture; Highlite uploads them to Jira after creating the issue. This is separate from sharing images with the AI provider.")
+                            .font(.caption2)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
 
                     Section("Jira connection") {

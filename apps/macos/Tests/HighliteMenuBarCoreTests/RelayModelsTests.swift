@@ -42,14 +42,55 @@ final class RelayModelsTests: XCTestCase {
         let response = try JSONDecoder().decode(JiraRecipeInfoResponse.self, from: fixtureData("jira_recipe"))
         XCTAssertTrue(response.managementEnabled)
         XCTAssertEqual(response.recipe.id, "jira-issue")
-        XCTAssertEqual(response.recipe.version, "1.1.0")
+        XCTAssertEqual(response.recipe.version, "1.2.0")
         XCTAssertTrue(response.recipe.hasApiToken)
         let settings = try XCTUnwrap(response.recipe.settings)
         XCTAssertEqual(settings.publishMode, .review)
+        XCTAssertFalse(settings.includeImages)
+        XCTAssertFalse(settings.attachImages)
         XCTAssertEqual(settings.jira.projectKey, "TEAM")
         XCTAssertEqual(settings.jira.issueTypeId, "10001")
         let labels = settings.jira.extraFields.objectValue?["labels"]
         XCTAssertEqual(labels, .array([.string("highlite")]))
+    }
+
+    func testOlderJiraDraftAndRunJSONDefaultsToNoAttachments() throws {
+        let data = Data(#"""
+        {
+          "sessionId": "legacy",
+          "recipe": "jira-issue",
+          "recipeVersion": "1.1.0",
+          "status": "draft",
+          "settings": {
+            "enabled": true,
+            "autoDraft": false,
+            "publishMode": "review",
+            "includeImages": false,
+            "prompt": "Legacy prompt",
+            "jira": {
+              "siteUrl": "https://team.atlassian.net",
+              "email": "person@example.com",
+              "projectKey": "TEAM",
+              "issueTypeId": "10001",
+              "extraFields": {}
+            }
+          },
+          "provider": null,
+          "draft": { "summary": "Legacy", "description": "Evidence" },
+          "revision": 1,
+          "issueKey": null,
+          "issueUrl": null,
+          "error": null,
+          "createdAtMs": 1,
+          "updatedAtMs": 2
+        }
+        """#.utf8)
+        let response = try JSONDecoder().decode(JiraRunResponse.self, from: data)
+        let run = try XCTUnwrap(response.run)
+        XCTAssertFalse(run.settings.attachImages)
+        XCTAssertTrue(run.availableAttachments.isEmpty)
+        XCTAssertTrue(run.attachmentResults.isEmpty)
+        XCTAssertEqual(run.draft?.attachments, [])
     }
 
     func testOpenCodeRunFixtureDecodes() throws {
@@ -176,6 +217,7 @@ final class RelayModelsTests: XCTestCase {
         XCTAssertFalse(jira.enabled)
         XCTAssertFalse(jira.prompt.isEmpty)
         XCTAssertEqual(jira.publishMode, .review)
+        XCTAssertFalse(jira.attachImages)
         XCTAssertEqual(jira.jira.extraFields, .object([:]))
         XCTAssertFalse(OpenCodeSettings.defaultPrompt.isEmpty)
     }

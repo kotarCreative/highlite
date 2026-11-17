@@ -173,6 +173,7 @@ private struct JiraRunSection: View {
     @State private var showPublish = false
     @State private var summary = ""
     @State private var description = ""
+    @State private var attachments: Set<String> = []
     @State private var syncedRevision = -1
     @State private var syncedUpdatedAt: Int64 = -1
 
@@ -180,7 +181,9 @@ private struct JiraRunSection: View {
 
     private var draftIsDirty: Bool {
         guard let draft = run?.draft else { return false }
-        return summary != draft.summary || description != draft.description
+        return summary != draft.summary
+            || description != draft.description
+            || attachments != Set(draft.attachments)
     }
 
     var body: some View {
@@ -237,6 +240,38 @@ private struct JiraRunSection: View {
                                 RoundedRectangle(cornerRadius: 6)
                                     .strokeBorder(DashboardTheme.lineStrong)
                             }
+
+                        if !run.availableAttachments.isEmpty {
+                            Text("Jira attachments")
+                                .font(.caption.weight(.semibold))
+                            ForEach(run.availableAttachments) { choice in
+                                Toggle(choice.name, isOn: attachmentBinding(choice.id))
+                                    .disabled(run.status != .draft)
+                            }
+                            Text("Selected PNGs are uploaded only after the issue is created. Deselect any image you do not want to share.")
+                                .font(.caption2)
+                                .foregroundStyle(DashboardTheme.muted)
+                        }
+                    }
+
+                    if !run.attachmentResults.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(run.attachmentResults) { result in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(result.name)
+                                        .font(.caption.weight(.medium))
+                                    Text(result.status.label)
+                                        .font(.caption2)
+                                        .foregroundStyle(result.status.color)
+                                    if let error = result.error {
+                                        Text(error)
+                                            .font(.caption2)
+                                            .foregroundStyle(DashboardTheme.danger)
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     HStack {
@@ -245,7 +280,13 @@ private struct JiraRunSection: View {
                                 _ = await model.saveJiraDraft(
                                     sessionId: session.sessionId,
                                     revision: run.revision,
-                                    draft: JiraDraft(summary: summary, description: description)
+                                    draft: JiraDraft(
+                                        summary: summary,
+                                        description: description,
+                                        attachments: run.availableAttachments
+                                            .map(\.id)
+                                            .filter(attachments.contains)
+                                    )
                                 )
                             }
                         }
@@ -321,7 +362,7 @@ private struct JiraRunSection: View {
                 }
             }
         } message: {
-            Text("This creates a Jira issue in \(run?.settings.jira.projectKey ?? "the configured project").")
+            Text("This creates a Jira issue in \(run?.settings.jira.projectKey ?? "the configured project").\(run?.draft?.attachments.isEmpty == false ? " Selected capture images are uploaded after the issue is created." : "")")
         }
         .onAppear { syncDraft() }
         .onChange(of: run?.revision) { _, _ in syncDraft() }
@@ -335,6 +376,40 @@ private struct JiraRunSection: View {
             syncedUpdatedAt = run.updatedAtMs
             summary = draft.summary
             description = draft.description
+            attachments = Set(draft.attachments)
+        }
+    }
+
+    private func attachmentBinding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { attachments.contains(id) },
+            set: { selected in
+                if selected {
+                    attachments.insert(id)
+                } else {
+                    attachments.remove(id)
+                }
+            }
+        )
+    }
+}
+
+private extension JiraAttachmentStatus {
+    var label: String {
+        switch self {
+        case .pending: return "Pending"
+        case .uploaded: return "Uploaded"
+        case .failed: return "Not uploaded"
+        case .unknown: return "Unconfirmed"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .pending: return DashboardTheme.muted
+        case .uploaded: return DashboardTheme.success
+        case .failed: return DashboardTheme.danger
+        case .unknown: return DashboardTheme.warning
         }
     }
 }

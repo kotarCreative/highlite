@@ -157,7 +157,8 @@ The dashboard covers:
 - **Sessions** with compiled bundle access.
 - **Providers** — add, edit, make default, disconnect.
 - **Jira recipe** — connection test, project/issue-type selection, prompt, publish mode,
-  image opt-in, and extra fields JSON.
+  separate AI-image and Jira-attachment opt-ins, selected attachment review, and extra
+  fields JSON.
 - **OpenCode recipe** — required directory, discovery version and eligible sessions,
   prompt, auto-draft, and enable/save.
 - **Settings** — relay and local path settings, plus narration setup status,
@@ -170,7 +171,8 @@ Parakeet paths outside the app's directory, and a failed state with a bounded
 retry. The preserved state is not a readiness claim: the app skips and does not
 verify those settings, so narration depends on the named commands and files.
 
-Session detail exposes Jira draft/edit/publish and OpenCode suggestion/override/confirm.
+Session detail exposes Jira draft/edit/publish, attachment selection and per-file upload
+results, and OpenCode suggestion/override/confirm.
 The interface explains that OpenCode routing is metadata-only and never auto-submits.
 
 ## Pending suggestions

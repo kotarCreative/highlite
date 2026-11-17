@@ -2,12 +2,13 @@
   "managementEnabled": true,
   "recipe": {
     "id": "jira-issue",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "settings": {
       "enabled": true,
       "autoDraft": true,
       "publishMode": "review",
       "includeImages": false,
+      "attachImages": false,
       "prompt": "Draft a careful issue.",
       "jira": {
         "siteUrl": "https://team.atlassian.net",
