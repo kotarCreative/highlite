@@ -311,7 +311,6 @@ class Highlite implements HighliteController {
         onMark: () => void this.mark().catch((error: unknown) => this.#reportError(error)),
         onStop: () => void this.stop().catch((error: unknown) => this.#reportError(error)),
         onCancel: () => void this.cancel().catch((error: unknown) => this.#reportError(error)),
-        onExport: () => void this.export().catch((error: unknown) => this.#reportError(error)),
         onAnnotation: (kind, points, clientX, clientY, target) =>
           void this.#addAnnotation(kind, points, clientX, clientY, target),
         onAnnotatingChange: (annotating) => {

@@ -273,18 +273,10 @@ try {
     'The SDK summary must describe form changes.',
   );
   assert.deepEqual(pageErrors, [], `Unexpected browser errors: ${pageErrors.join(', ')}`);
-
-  const [download] = await Promise.all([
-    page.waitForEvent('download'),
-    page.getByRole('button', { name: 'Download the Highlite bundle' }).click(),
-  ]);
-  const archivePath = await download.path();
-  assert.ok(archivePath, 'The ZIP export should produce a downloadable archive.');
-  const archive = await readFile(archivePath);
   assert.equal(
-    archive.subarray(0, 2).toString(),
-    'PK',
-    'The exported artifact should be a ZIP file.',
+    await page.getByRole('button', { name: 'Download the Highlite bundle' }).count(),
+    0,
+    'The web client must not expose a ZIP download button.',
   );
 
   await page.getByRole('button', { name: 'Start Highlite' }).click();
@@ -389,13 +381,13 @@ try {
       relay: { endpoint, token: 'ingest-test' },
       onComplete: (bundle) => (window.__iifeBundles ??= []).push(bundle),
     });
+    window.__iifeCapture = capture;
     await capture.start();
     await capture.mark('IIFE first session');
     await capture.stop();
     await capture.start();
     await capture.mark('IIFE second session');
     await capture.stop();
-    await capture.destroy();
   }, relayEndpoint);
   const iifeBundles = await iifePage.evaluate(() =>
     (window.__iifeBundles ?? []).map((bundle) => ({
@@ -437,6 +429,22 @@ try {
     assert.equal(request.zip, 'PK', 'The relay must receive a ZIP archive.');
     assert.ok(request.bytes > 0, 'The relay upload must not be empty.');
   }
+
+  const [download] = await Promise.all([
+    iifePage.waitForEvent('download'),
+    iifePage.evaluate(async () => {
+      await window.__iifeCapture.export();
+    }),
+  ]);
+  const archivePath = await download.path();
+  assert.ok(archivePath, 'The programmatic ZIP export should produce a downloadable archive.');
+  const archive = await readFile(archivePath);
+  assert.equal(
+    archive.subarray(0, 2).toString(),
+    'PK',
+    'The exported artifact should be a ZIP file.',
+  );
+  await iifePage.evaluate(() => window.__iifeCapture.destroy());
   await new Promise((resolve) => relay.close(resolve));
 
   await iifePage.evaluate(async () => {
@@ -816,7 +824,7 @@ try {
   await context.close();
   await pendingContext.close();
   process.stdout.write(
-    'Browser smoke passed: ESM/IIFE builds, audio, frames, annotations, tooltips, keyboard shortcuts, interactions, export, discard confirmation, and cancel.\n',
+    'Browser smoke passed: ESM/IIFE builds, audio, frames, annotations, tooltips, keyboard shortcuts, interactions, programmatic ZIP export, discard confirmation, and cancel.\n',
   );
 } finally {
   await browser?.close();

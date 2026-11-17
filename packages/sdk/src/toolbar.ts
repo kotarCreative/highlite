@@ -36,7 +36,6 @@ export interface ToolbarOptions {
   onMark: () => void;
   onStop: () => void;
   onCancel: () => void;
-  onExport: () => void;
   onAnnotation: (
     kind: AnnotationKind,
     points: Annotation['points'],
@@ -242,7 +241,6 @@ export class CaptureToolbar {
   readonly #markButton: HTMLButtonElement;
   readonly #stopButton: HTMLButtonElement;
   readonly #cancelButton: HTMLButtonElement;
-  readonly #exportButton: HTMLButtonElement;
   readonly #canvas: HTMLCanvasElement;
   readonly #context: CanvasRenderingContext2D;
   readonly #backdrop: HTMLDivElement;
@@ -320,10 +318,8 @@ export class CaptureToolbar {
     this.#recordButton = this.#button('Record', 'Start Highlite', 'primary');
     primaryRow.append(this.#recordButton);
 
-    this.#exportButton = this.#button('Download ZIP', 'Download the Highlite bundle', 'primary');
-    this.#exportButton.hidden = true;
     this.#panel.id = 'highlite-capture-panel';
-    this.#panel.append(heading, this.#status, disclosure, primaryRow, this.#exportButton);
+    this.#panel.append(heading, this.#status, disclosure, primaryRow);
 
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar';
@@ -590,7 +586,6 @@ export class CaptureToolbar {
     this.#markButton.hidden = false;
     this.#stopButton.hidden = false;
     this.#cancelButton.hidden = false;
-    this.#exportButton.hidden = true;
     this.#setControlsEnabled(false);
     this.#setAnnotating(false);
     this.setStatus('Starting Highlite…');
@@ -624,7 +619,6 @@ export class CaptureToolbar {
     this.#dock.hidden = true;
     this.#launcher.hidden = false;
     this.#setPanelOpen(true);
-    this.#exportButton.hidden = true;
     this.setStatus('Finishing audio and assembling the Highlite bundle…');
   }
 
@@ -634,9 +628,8 @@ export class CaptureToolbar {
     this.#setAnnotating(false);
     this.#dock.hidden = true;
     this.#launcher.hidden = false;
-    this.#exportButton.hidden = false;
     this.#setPanelOpen(true);
-    this.setStatus('Highlite session ready. Download the portable ZIP bundle.');
+    this.setStatus('Highlite session ready.');
   }
 
   setCancelled(): void {
@@ -646,7 +639,6 @@ export class CaptureToolbar {
     this.#setAnnotating(false);
     this.#dock.hidden = true;
     this.#launcher.hidden = false;
-    this.#exportButton.hidden = true;
     this.#setPanelOpen(true);
     this.setStatus('Highlite session discarded. No bundle was created.');
   }
@@ -717,7 +709,6 @@ export class CaptureToolbar {
     this.#markButton.addEventListener('click', () => this.#run(this.#options.onMark));
     this.#stopButton.addEventListener('click', () => this.#run(this.#options.onStop));
     this.#cancelButton.addEventListener('click', () => this.#requestDiscard());
-    this.#exportButton.addEventListener('click', () => this.#run(this.#options.onExport));
     this.#confirmKeep.addEventListener('click', () => this.#dismissDiscard());
     this.#confirmDiscardButton.addEventListener('click', () => this.#discardCapture());
     this.#confirmBackdrop.addEventListener('click', (event) => {
