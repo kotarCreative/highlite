@@ -5,6 +5,10 @@ It does not use the separate Vite demo application or require an asset server.
 
 ## Shared UI layers
 
+The highlighter palette is shared with the native macOS dashboard and the browser
+capture recorder. See [`docs/highlite-brand.md`](highlite-brand.md) for the token
+map, hierarchy, and appearance rules before changing visual foundations.
+
 - `crates/highlite-relay/src/ui-theme.css` owns the highlighter yellow, orange, and
   pink palette, typography,
   spacing, radii, and shadow tokens. Change visual foundations here rather than

@@ -220,6 +220,12 @@ The dashboard contains:
 - **Settings**: port, origins, binary path, narration setup status and retry,
   private paths, token copy actions, and suggestion-popup history.
 
+The dashboard uses the shared Highlite highlighter palette: a warm canvas, ink
+text, magenta primary controls, and yellow marker actions with dark ink. The
+palette resolves to an ink-and-pink dark appearance under Dark Aqua. See
+[`docs/highlite-brand.md`](../../docs/highlite-brand.md) for the shared tokens
+and hierarchy; keep `DashboardStyle.swift` aligned with the relay and recorder.
+
 Provider and Jira credentials remain the relay's existing private files. The app
 does not read them, migrate them to Keychain, or claim Keychain protection for
 them. Only the relay bearer tokens are in Keychain.
