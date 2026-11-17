@@ -28,8 +28,11 @@ bash scripts/build-macos-app.sh
 ```
 
 The packaging script assembles `dist/Highlite.app`, copies the relay to
-`Contents/Resources/highlite-relay`, lints the plist, and applies an ad-hoc
-signature. Verify with:
+`Contents/Resources/highlite-relay`, copies the highlighter icon to
+`Contents/Resources/AppIcon.icns`, lints the plist, and applies an ad-hoc
+signature. Regenerate the icon after changing `Resources/AppIcon.svg` with
+`pnpm generate:macos-icon`; normal builds use the committed
+`Resources/AppIcon.icns` and need no SVG rasterizer. Verify with:
 
 ```sh
 bash scripts/verify-macos-app.sh
@@ -44,7 +47,10 @@ runs.
 
 ## First launch and relay lifecycle
 
-Launching the app opens the dashboard and adds a sparkles icon to the menu bar.
+Launching the app opens the dashboard and adds a highlighter icon to the menu bar.
+The bundled app icon is also a highlighter: `Resources/AppIcon.svg` is the vector
+source, `Resources/AppIcon.icns` is the generated macOS icon, and
+`scripts/generate-macos-app-icon.py` regenerates the ICNS after source changes.
 Closing the dashboard leaves the app and relay running. Open the app again
 (including with `open dist/Highlite.app`) or choose **Open Dashboard** from the
 menu bar to bring the dashboard back, including when it is minimized.

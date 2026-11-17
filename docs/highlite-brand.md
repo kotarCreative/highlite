@@ -46,7 +46,13 @@ diluted by the highlighter palette.
 - **Surfaces:** warm canvas behind the work, white cards for content, muted warm
   fill for code and inset areas. Borders and shadows stay subtle.
 - **Typography:** ink for titles and body, muted for metadata. Page titles get a
-  short yellow marker stroke, mirroring the relay brand wordmark.
+  short yellow marker stroke, mirroring the relay brand wordmark. The macOS
+  marker is deliberately translucent (`DashboardStyle.titleMarkerOpacity`) so
+  light ink stays readable in Dark Aqua; it is decoration, not a text surface.
+- **Iconography:** the native app and menu bar use a highlighter mark rather
+  than a generic sparkle. `apps/macos/Resources/AppIcon.svg` is the icon source,
+  the committed `AppIcon.icns` is bundled as `CFBundleIconFile`, and
+  `pnpm generate:macos-icon` rebuilds the ICNS from the vector.
 - **Actions:** yellow primary buttons use dark ink, a thin dark outline, and a
   small offset shadow. Secondary controls stay on white with line-colored
   borders. Tinted controls use the magenta primary, never the yellow action
@@ -77,5 +83,8 @@ diluted by the highlighter palette.
 - `node scripts/browser-smoke.mjs` checks the rendered recorder dock and active
   tool colors after building the SDK.
 - `swift test --package-path apps/macos` covers the native palette, dark
-  appearance, and contrast assertions on macOS. Linux cannot run the SwiftUI
-  build or visual checks.
+  appearance, title-marker contrast, and other contrast assertions on macOS.
+  Linux cannot run the SwiftUI build or visual checks.
+- `pnpm verify:macos` statically checks the icon source, generated ICNS
+  structure, plist declaration, and packaging script on Linux; the macOS run
+  verifies the bundled icon alongside the signed app.

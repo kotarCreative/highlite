@@ -31,7 +31,9 @@ dist/Highlite.app/
   Contents/
     Info.plist
     MacOS/HighliteMenuBar
-    Resources/highlite-relay
+    Resources/
+      AppIcon.icns
+      highlite-relay
 ```
 
 It assembles a temporary sibling bundle, clears extended attributes, lints the plist,
@@ -128,14 +130,26 @@ was closed or minimized.
 The sidebar and detail enforce one shared minimum: 180pt sidebar + 780pt detail + the
 split-view divider. The window's minimum content size includes that divider so resizing
 cannot clip either column. The **Sessions** list and detail panes fill the remaining
-height and scroll independently.
+height and scroll independently. The sidebar is fixed and visible; the dashboard removes
+the default toolbar hide/show control.
 
 The app installs the standard Edit menu so **Cmd+V**, **Cmd+C**, **Cmd+X**, and
 **Cmd+A** reach the focused text field. API-key fields accept paste while remaining
 masked; copying or cutting secrets remains subject to macOS secure-field restrictions.
 
-The menu bar shows relay status, a pending-suggestion badge, and actions to open the
-dashboard, start or stop the relay, and quit.
+The menu bar uses the highlighter symbol and shows relay status, a pending-suggestion
+badge, and actions to open the dashboard, start or stop the relay, and quit.
+
+The app bundle carries a matching highlighter icon. `Resources/AppIcon.svg` is the
+vector source, `Resources/AppIcon.icns` is the generated multi-resolution Mac icon, and
+`pnpm generate:macos-icon` (or `scripts/generate-macos-app-icon.py`) regenerates the ICNS after vector changes. The
+packaging script copies it to `Contents/Resources/AppIcon.icns`, and `Info.plist`
+declares it as `CFBundleIconFile`. Normal builds use the committed ICNS; only changing
+the icon artwork requires `rsvg-convert` or ImageMagick.
+
+Page titles use a translucent yellow marker stroke behind ink text. The marker opacity
+stays low enough that Dark Aqua's light ink remains readable, while active tools and
+primary actions keep the full-strength highlighter yellow.
 
 The dashboard covers:
 
@@ -177,7 +191,10 @@ the target.
 ```text
 apps/macos/
   Package.swift
-  Resources/Info.plist
+  Resources/
+    Info.plist
+    AppIcon.svg
+    AppIcon.icns
   Sources/
     HighliteMenuBarCore/
       RelayModels.swift
