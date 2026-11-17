@@ -1618,6 +1618,7 @@ async fn activity_unions_recipe_metadata_without_prompts_or_drafts() {
             auto_draft: false,
             publish_mode: crate::recipes::PublishMode::Review,
             include_images: false,
+            attach_images: false,
             prompt: "JIRA-PROMPT-SECRET".to_owned(),
             jira: crate::jira::JiraTarget {
                 site_url: "https://team.atlassian.net".to_owned(),
@@ -1629,6 +1630,8 @@ async fn activity_unions_recipe_metadata_without_prompts_or_drafts() {
         },
         provider: None,
         draft: None,
+        available_attachments: Vec::new(),
+        attachment_results: Vec::new(),
         revision: 1,
         issue_key: Some("TEAM-123".to_owned()),
         issue_url: Some("https://team.atlassian.net/browse/TEAM-123".to_owned()),

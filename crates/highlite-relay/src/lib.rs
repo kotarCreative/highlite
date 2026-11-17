@@ -48,6 +48,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 mod activity;
 mod ai;
+mod attachments;
 mod jira;
 mod opencode;
 mod opencode_http;

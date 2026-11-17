@@ -19,11 +19,24 @@ use tower::ServiceExt;
 use crate::providers::{ConnectProvider, ProviderKind, ProviderStore};
 use crate::tests::{capture_zip, request, test_config};
 
+#[derive(Debug, Clone)]
+struct UploadedAttachment {
+    filename: String,
+    content_type: String,
+    token: String,
+    authorization: String,
+    bytes: Vec<u8>,
+}
+
 #[derive(Default)]
 struct MockRemote {
     ai_calls: AtomicUsize,
     jira_calls: AtomicUsize,
     jira_status: AtomicU16,
+    attachment_calls: AtomicUsize,
+    attachment_status: AtomicU16,
+    uploaded_attachments: Mutex<Vec<UploadedAttachment>>,
+    ai_attachments: Mutex<Vec<String>>,
     invalid_ai: std::sync::atomic::AtomicBool,
     bodies: Mutex<Vec<Value>>,
     metadata_status: AtomicU16,
@@ -82,9 +95,59 @@ async fn remote(State(state): State<Arc<MockRemote>>, request: axum::extract::Re
         };
         return Json(body).into_response();
     }
+    let atlassian_token = request
+        .headers()
+        .get("x-atlassian-token")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let request_content_type = request
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
     let bytes = to_bytes(request.into_body(), 8 * 1024 * 1024)
         .await
         .unwrap();
+    if path.starts_with("/rest/api/3/issue/") && path.ends_with("/attachments") {
+        assert!(path.starts_with("/rest/api/3/issue/TEAM-123/attachments"));
+        assert_eq!(
+            auth,
+            format!(
+                "Basic {}",
+                STANDARD.encode("person@example.com:jira-secret")
+            )
+        );
+        let token = atlassian_token.unwrap();
+        assert_eq!(token, "no-check");
+        let content_type = request_content_type.unwrap();
+        let boundary = content_type
+            .split("boundary=")
+            .nth(1)
+            .expect("multipart boundary");
+        let (filename, part_type, part) = multipart_file(&bytes, boundary);
+        assert_eq!(part_type, "image/png");
+        state.attachment_calls.fetch_add(1, Ordering::SeqCst);
+        state
+            .uploaded_attachments
+            .lock()
+            .unwrap()
+            .push(UploadedAttachment {
+                filename,
+                content_type,
+                token,
+                authorization: auth,
+                bytes: part,
+            });
+        let status = state.attachment_status.load(Ordering::SeqCst);
+        if status != 0 && status != 200 {
+            return (
+                StatusCode::from_u16(status).unwrap(),
+                Json(json!({"errorMessages": ["do not expose jira-secret or ai-secret"]})),
+            )
+                .into_response();
+        }
+        return (StatusCode::OK, Json(json!([{"id": "attachment-1"}]))).into_response();
+    }
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     state.bodies.lock().unwrap().push(body.clone());
     if path == "/v1/chat/completions" {
@@ -101,7 +164,12 @@ async fn remote(State(state): State<Arc<MockRemote>>, request: axum::extract::Re
         let content = if state.invalid_ai.load(Ordering::SeqCst) {
             "not valid JSON".to_owned()
         } else {
-            json!({"summary": "Captured defect", "description": "Observed behavior\nSteps at #0\nExpected behavior is not evidenced."}).to_string()
+            let mut draft = json!({"summary": "Captured defect", "description": "Observed behavior\nSteps at #0\nExpected behavior is not evidenced."});
+            let attachments = state.ai_attachments.lock().unwrap().clone();
+            if !attachments.is_empty() {
+                draft["attachments"] = json!(attachments);
+            }
+            draft.to_string()
         };
         return Json(
             json!({"choices": [{"finish_reason": "stop", "message": {"content": content}}]}),
@@ -131,6 +199,35 @@ async fn remote(State(state): State<Arc<MockRemote>>, request: axum::extract::Re
         Json(json!({"key": "TEAM-123", "id": "123"})),
     )
         .into_response()
+}
+
+fn multipart_file(body: &[u8], boundary: &str) -> (String, String, Vec<u8>) {
+    let marker = format!("--{boundary}");
+    let header_end = find_bytes(body, b"\r\n\r\n").expect("multipart headers") + 4;
+    let headers = std::str::from_utf8(&body[..header_end]).unwrap();
+    let filename = headers
+        .split("filename=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("multipart filename")
+        .to_owned();
+    assert!(headers.contains("name=\"file\""));
+    let content_type = headers
+        .split("Content-Type: ")
+        .nth(1)
+        .and_then(|rest| rest.split("\r\n").next())
+        .expect("multipart content type")
+        .to_owned();
+    let end = find_bytes(&body[header_end..], format!("\r\n{marker}").as_bytes())
+        .expect("multipart end")
+        + header_end;
+    (filename, content_type, body[header_end..end].to_vec())
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 async fn mock_remote() -> (String, Arc<MockRemote>, tokio::task::JoinHandle<()>) {
@@ -591,5 +688,353 @@ async fn rejects_invalid_ai_and_does_not_retry_ambiguous_jira_publication() {
         "publish-unknown"
     );
     assert_eq!(remote.ai_calls.load(Ordering::SeqCst), 2);
+    task.abort();
+}
+
+const CONTACT_PNG: &[u8] = b"\x89PNG\r\n\x1a\ncontact-sheet";
+const FRAME_PNG: &[u8] = b"\x89PNG\r\n\x1a\nframe-one";
+
+fn write_bundle_images(config: &crate::RelayConfig, session_id: &str) {
+    let bundle = config.data_dir.join("bundles").join(session_id);
+    std::fs::create_dir_all(bundle.join("frames")).unwrap();
+    std::fs::write(bundle.join("contact-sheet.png"), CONTACT_PNG).unwrap();
+    std::fs::write(bundle.join("frames/frame-01.png"), FRAME_PNG).unwrap();
+}
+
+fn attachment_settings(base: &str, auto_draft: bool, publish_mode: &str) -> Value {
+    let mut settings = settings(base, auto_draft, publish_mode);
+    settings["attachImages"] = json!(true);
+    settings
+}
+
+#[tokio::test]
+async fn reviewed_attachment_selection_is_allowlisted_and_uploaded_once() {
+    let temp = TempDir::new().unwrap();
+    let config = test_config(&temp);
+    let (base, remote, task) = mock_remote().await;
+    provider(&config.config_dir, &base);
+    *remote.ai_attachments.lock().unwrap() =
+        vec!["contact-sheet".to_owned(), "frame-01".to_owned()];
+    let store = crate::recipes::RecipeStore::new(config.config_dir.clone());
+    store
+        .configure(
+            serde_json::from_value(json!({
+                "settings": attachment_settings(&base, false, "review"),
+                "apiToken": "jira-secret"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let app = crate::build_app(config.clone()).unwrap();
+    assert_eq!(upload(&app, "attachment-review").await, StatusCode::CREATED);
+    write_bundle_images(&config, "attachment-review");
+    let path = "/v1/sessions/attachment-review/recipes/jira-issue";
+    assert_eq!(
+        call(&app, Method::POST, path, Value::Null, "read-secret")
+            .await
+            .0,
+        StatusCode::ACCEPTED
+    );
+    let draft = wait_for(&app, path, "draft").await;
+    assert_eq!(
+        draft["availableAttachments"],
+        json!([
+            {"id": "contact-sheet", "name": "contact-sheet.png"},
+            {"id": "frame-01", "name": "frame-01.png"}
+        ])
+    );
+    assert_eq!(
+        draft["draft"]["attachments"],
+        json!(["contact-sheet", "frame-01"])
+    );
+    {
+        let bodies = remote.bodies.lock().unwrap();
+        let ai = bodies
+            .iter()
+            .find(|body| body["messages"].is_array())
+            .unwrap();
+        let instructions = ai["messages"][0]["content"].as_str().unwrap();
+        assert!(instructions.contains("Jira attachment sharing is enabled"));
+        assert!(instructions.contains("- frame-01: frame-01.png"));
+    }
+
+    let edit_path = format!("{path}/draft");
+    for invalid in [vec!["frame-99"], vec!["../contact-sheet.png"]] {
+        assert_eq!(
+            call(
+                &app,
+                Method::POST,
+                &edit_path,
+                json!({
+                    "revision": draft["revision"],
+                    "draft": {
+                        "summary": "Reviewed defect",
+                        "description": "Reviewed evidence.",
+                        "attachments": invalid
+                    }
+                }),
+                "read-secret"
+            )
+            .await
+            .0,
+            StatusCode::CONFLICT
+        );
+    }
+    let (code, edited) = call(
+        &app,
+        Method::POST,
+        &edit_path,
+        json!({
+            "revision": draft["revision"],
+            "draft": {
+                "summary": "Reviewed defect",
+                "description": "Reviewed evidence.",
+                "attachments": ["frame-01"]
+            }
+        }),
+        "read-secret",
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(edited["draft"]["attachments"], json!(["frame-01"]));
+
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("{path}/publish"),
+            json!({"revision": edited["revision"]}),
+            "read-secret"
+        )
+        .await
+        .0,
+        StatusCode::ACCEPTED
+    );
+    let published = wait_for_matching(&app, path, "published with attachment", |run| {
+        run["status"] == "published" && run["attachmentResults"][0]["status"] == "uploaded"
+    })
+    .await;
+    assert_eq!(published["issueKey"], "TEAM-123");
+    assert_eq!(
+        published["attachmentResults"],
+        json!([{
+            "id": "frame-01",
+            "name": "frame-01.png",
+            "status": "uploaded"
+        }])
+    );
+    assert_eq!(published["error"], Value::Null);
+    assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(remote.attachment_calls.load(Ordering::SeqCst), 1);
+    {
+        let uploads = remote.uploaded_attachments.lock().unwrap();
+        assert_eq!(uploads[0].filename, "frame-01.png");
+        assert_eq!(uploads[0].bytes, FRAME_PNG);
+        assert_eq!(uploads[0].token, "no-check");
+        assert!(
+            uploads[0]
+                .content_type
+                .starts_with("multipart/form-data; boundary=")
+        );
+        assert_eq!(
+            uploads[0].authorization,
+            format!(
+                "Basic {}",
+                STANDARD.encode("person@example.com:jira-secret")
+            )
+        );
+    }
+
+    // Repeating the approval returns the recorded publication without creating or uploading again.
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("{path}/publish"),
+            json!({"revision": edited["revision"]}),
+            "read-secret"
+        )
+        .await
+        .0,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(remote.attachment_calls.load(Ordering::SeqCst), 1);
+    task.abort();
+}
+
+#[tokio::test]
+async fn attachment_failures_keep_the_created_issue_and_never_retry_uploads() {
+    let temp = TempDir::new().unwrap();
+    let config = test_config(&temp);
+    let (base, remote, task) = mock_remote().await;
+    provider(&config.config_dir, &base);
+    *remote.ai_attachments.lock().unwrap() =
+        vec!["contact-sheet".to_owned(), "frame-01".to_owned()];
+    remote.attachment_status.store(413, Ordering::SeqCst);
+    let store = crate::recipes::RecipeStore::new(config.config_dir.clone());
+    store
+        .configure(
+            serde_json::from_value(json!({
+                "settings": attachment_settings(&base, false, "automatic"),
+                "apiToken": "jira-secret"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let app = crate::build_app(config.clone()).unwrap();
+    assert_eq!(
+        upload(&app, "attachment-failure").await,
+        StatusCode::CREATED
+    );
+    write_bundle_images(&config, "attachment-failure");
+    let path = "/v1/sessions/attachment-failure/recipes/jira-issue";
+    assert_eq!(
+        call(&app, Method::POST, path, Value::Null, "read-secret")
+            .await
+            .0,
+        StatusCode::ACCEPTED
+    );
+    let failed = wait_for_matching(&app, path, "published with attachment failures", |run| {
+        run["status"] == "published"
+            && run["attachmentResults"].as_array().is_some_and(|results| {
+                results.len() == 2 && results.iter().all(|result| result["status"] == "failed")
+            })
+    })
+    .await;
+    assert_eq!(failed["issueKey"], "TEAM-123");
+    assert_eq!(failed["draft"]["summary"], "Captured defect");
+    assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(remote.attachment_calls.load(Ordering::SeqCst), 2);
+    assert!(
+        failed["error"]
+            .as_str()
+            .unwrap()
+            .contains("2 of 2 selected attachments")
+    );
+    assert!(
+        failed["attachmentResults"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("size limit")
+    );
+
+    let revision = failed["revision"].clone();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("{path}/publish"),
+            json!({"revision": revision}),
+            "read-secret"
+        )
+        .await
+        .0,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(remote.attachment_calls.load(Ordering::SeqCst), 2);
+    task.abort();
+}
+
+#[tokio::test]
+async fn attachment_consent_cannot_be_overridden_by_the_model_or_draft_edits() {
+    let temp = TempDir::new().unwrap();
+    let config = test_config(&temp);
+    let (base, remote, task) = mock_remote().await;
+    provider(&config.config_dir, &base);
+    *remote.ai_attachments.lock().unwrap() = vec!["contact-sheet".to_owned()];
+    let store = crate::recipes::RecipeStore::new(config.config_dir.clone());
+    store
+        .configure(
+            serde_json::from_value(json!({
+                "settings": settings(&base, false, "review"),
+                "apiToken": "jira-secret"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let app = crate::build_app(config.clone()).unwrap();
+    assert_eq!(
+        upload(&app, "attachment-disabled").await,
+        StatusCode::CREATED
+    );
+    write_bundle_images(&config, "attachment-disabled");
+    let path = "/v1/sessions/attachment-disabled/recipes/jira-issue";
+    assert_eq!(
+        call(&app, Method::POST, path, Value::Null, "read-secret")
+            .await
+            .0,
+        StatusCode::ACCEPTED
+    );
+    let failed = wait_for(&app, path, "failed").await;
+    assert!(
+        failed["error"]
+            .as_str()
+            .unwrap()
+            .contains("attachment sharing was disabled")
+    );
+    assert_eq!(remote.jira_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(remote.attachment_calls.load(Ordering::SeqCst), 0);
+    {
+        let bodies = remote.bodies.lock().unwrap();
+        let ai = bodies
+            .iter()
+            .find(|body| body["messages"].is_array())
+            .unwrap();
+        let instructions = ai["messages"][0]["content"].as_str().unwrap();
+        assert!(instructions.contains("Jira attachment sharing is disabled"));
+        assert!(!instructions.contains("Jira attachment sharing is enabled"));
+    }
+
+    // A draft created with consent cannot gain attachments after the setting is turned off.
+    remote.ai_attachments.lock().unwrap().clear();
+    store
+        .configure(
+            serde_json::from_value(json!({
+                "settings": attachment_settings(&base, false, "review"),
+                "apiToken": "jira-secret"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        upload(&app, "attachment-revoked").await,
+        StatusCode::CREATED
+    );
+    write_bundle_images(&config, "attachment-revoked");
+    let revoked_path = "/v1/sessions/attachment-revoked/recipes/jira-issue";
+    assert_eq!(
+        call(&app, Method::POST, revoked_path, Value::Null, "read-secret")
+            .await
+            .0,
+        StatusCode::ACCEPTED
+    );
+    let draft = wait_for(&app, revoked_path, "draft").await;
+    store
+        .configure(
+            serde_json::from_value(json!({
+                "settings": settings(&base, false, "review"),
+                "apiToken": "jira-secret"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let (code, _) = call(
+        &app,
+        Method::POST,
+        &format!("{revoked_path}/draft"),
+        json!({
+            "revision": draft["revision"],
+            "draft": {
+                "summary": "Reviewed defect",
+                "description": "Reviewed evidence.",
+                "attachments": ["contact-sheet"]
+            }
+        }),
+        "read-secret",
+    )
+    .await;
+    assert_eq!(code, StatusCode::CONFLICT);
     task.abort();
 }

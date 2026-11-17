@@ -255,6 +255,8 @@ pub(crate) async fn issue_types(
 pub(crate) struct IssueDraft {
     pub summary: String,
     pub description: String,
+    #[serde(default)]
+    pub attachments: Vec<String>,
 }
 
 impl IssueDraft {
@@ -274,6 +276,21 @@ impl IssueDraft {
         {
             return Err("issue description must be non-empty text within 32 KiB".to_owned());
         }
+        if self.attachments.len() > crate::attachments::MAX_ATTACHMENTS
+            || self
+                .attachments
+                .iter()
+                .any(|id| !crate::attachments::valid_id(id))
+        {
+            return Err(format!(
+                "issue attachments must be up to {} capture image identifiers",
+                crate::attachments::MAX_ATTACHMENTS
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        if self.attachments.iter().any(|id| !seen.insert(id)) {
+            return Err("each issue attachment can be selected only once".to_owned());
+        }
         Ok(())
     }
 }
@@ -289,6 +306,7 @@ pub(crate) async fn create_issue(
     token: &str,
     draft: &IssueDraft,
     session_id: &str,
+    recipe_version: &str,
 ) -> PublishOutcome {
     let client = match crate::ai::client(30) {
         Ok(client) => client,
@@ -299,7 +317,7 @@ pub(crate) async fn create_issue(
     fields.insert("issuetype".to_owned(), json!({"id": target.issue_type_id}));
     fields.insert("summary".to_owned(), json!(draft.summary));
     fields.insert("description".to_owned(), document(&draft.description));
-    let payload = json!({"fields": fields, "properties": [{"key": "highlite.session", "value": {"sessionId": session_id, "recipe": "jira-issue", "version": "1.0.0"}}]});
+    let payload = json!({"fields": fields, "properties": [{"key": "highlite.session", "value": {"sessionId": session_id, "recipe": "jira-issue", "version": recipe_version}}]});
     let response = match client.post(format!("{}/rest/api/3/issue", target.site_url.trim_end_matches('/')))
         .basic_auth(&target.email, Some(token)).json(&payload).send().await
     {
@@ -331,6 +349,76 @@ pub(crate) async fn create_issue(
         key: key.to_owned(),
         url: format!("{}/browse/{key}", target.site_url.trim_end_matches('/')),
     }
+}
+
+pub(crate) enum AttachmentOutcome {
+    Uploaded,
+    Rejected(String),
+    Unknown(String),
+}
+
+pub(crate) async fn upload_attachment(
+    target: &JiraTarget,
+    token: &str,
+    issue_key: &str,
+    file_name: &str,
+    bytes: &[u8],
+) -> AttachmentOutcome {
+    let client = match crate::ai::client(30) {
+        Ok(client) => client,
+        Err(error) => return AttachmentOutcome::Rejected(error),
+    };
+    let part = match reqwest::multipart::Part::bytes(bytes.to_vec())
+        .file_name(file_name.to_owned())
+        .mime_str("image/png")
+    {
+        Ok(part) => part,
+        Err(_) => {
+            return AttachmentOutcome::Rejected(
+                "Could not prepare the Jira attachment request.".to_owned(),
+            );
+        }
+    };
+    let form = reqwest::multipart::Form::new().part("file", part);
+    let response = match client
+        .post(format!(
+            "{}/rest/api/3/issue/{issue_key}/attachments",
+            target.site_url.trim_end_matches('/')
+        ))
+        .basic_auth(&target.email, Some(token))
+        .header("X-Atlassian-Token", "no-check")
+        .multipart(form)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => {
+            return AttachmentOutcome::Unknown(
+                "Jira did not confirm the attachment upload (request failed or timed out). Check the issue before uploading it again."
+                    .to_owned(),
+            );
+        }
+    };
+    let status = response.status().as_u16();
+    if status == 200 {
+        return AttachmentOutcome::Uploaded;
+    }
+    let message = match status {
+        401 => "Jira rejected the credentials while adding the attachment.".to_owned(),
+        403 => {
+            "Jira denied adding the attachment. Check this account's Create attachments permission and issue access."
+                .to_owned()
+        }
+        404 => "Jira did not find the issue for the attachment upload.".to_owned(),
+        413 => "Jira rejected the attachment because it exceeds the site's attachment size limit."
+            .to_owned(),
+        429 => "Jira is rate limiting attachment uploads. Try again later.".to_owned(),
+        300..=399 => {
+            "Jira redirected the attachment upload; redirects are not followed.".to_owned()
+        }
+        _ => format!("Jira returned HTTP {status} while adding the attachment."),
+    };
+    AttachmentOutcome::Rejected(message)
 }
 
 fn valid_issue_key(key: &str) -> bool {
@@ -378,7 +466,17 @@ mod tests {
         assert!(
             IssueDraft {
                 summary: "bad\nsummary".to_owned(),
-                description: "body".to_owned()
+                description: "body".to_owned(),
+                attachments: Vec::new(),
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            IssueDraft {
+                summary: "Valid".to_owned(),
+                description: "body".to_owned(),
+                attachments: vec!["../contact-sheet.png".to_owned()],
             }
             .validate()
             .is_err()

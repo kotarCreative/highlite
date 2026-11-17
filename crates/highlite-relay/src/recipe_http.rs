@@ -7,6 +7,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
 
+use crate::attachments::AttachmentInventory;
 use crate::jira::IssueDraft;
 use crate::recipes::{self, ConfigureRecipe, PublishTrigger, RecipeStore, RunStore, blocking};
 use crate::{
@@ -234,7 +235,28 @@ async fn edit(State(state): State<AppState>, Path(id): Path<String>, request: Re
         Err((status, message)) => return error_response(status, message),
     };
     let store = RunStore::new(&state.config.data_dir);
-    match blocking(move || store.edit(&id, input.draft, input.revision)).await {
+    let bundle_dir = state.config.data_dir.join("bundles").join(&id);
+    let config_root = state.config.config_dir.clone();
+    match blocking(move || {
+        let run = store.read(&id)?.ok_or("recipe run not found")?;
+        if !input.draft.attachments.is_empty() {
+            let settings = RecipeStore::new(config_root)
+                .info()?
+                .settings
+                .ok_or("configure the Jira recipe before selecting attachments")?;
+            if !run.settings.attach_images || !settings.attach_images {
+                return Err(
+                    "Jira attachment sharing is disabled for this draft; remove the selected attachments or regenerate the draft"
+                        .to_owned(),
+                );
+            }
+            AttachmentInventory::load(&bundle_dir)?
+                .validate_selection(&input.draft.attachments)?;
+        }
+        store.edit(&id, input.draft, input.revision)
+    })
+    .await
+    {
         Ok(run) => Json(run).into_response(),
         Err(error) => error_response(StatusCode::CONFLICT, error),
     }
