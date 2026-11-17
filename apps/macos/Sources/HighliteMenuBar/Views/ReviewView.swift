@@ -37,7 +37,7 @@ struct ReviewView: View {
                 .font(.callout)
             Text("Run revision \(request.run.revision)")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DashboardTheme.muted)
 
             if let suggestion = request.run.suggestion {
                 Card("AI suggestion") {
@@ -46,12 +46,12 @@ struct ReviewView: View {
                             .font(.callout.weight(.medium))
                         StatusPill(
                             text: suggestion.confidence.rawValue.capitalized,
-                            color: suggestion.confidence == .high ? .green : (suggestion.confidence == .medium ? .orange : .secondary)
+                            color: suggestion.confidence == .high ? DashboardTheme.success : (suggestion.confidence == .medium ? DashboardTheme.warning : DashboardTheme.muted)
                         )
                     }
                     Text(suggestion.directory)
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                     Text(suggestion.reason)
                         .font(.callout)
                         .textSelection(.enabled)
@@ -60,14 +60,14 @@ struct ReviewView: View {
                 Card("Manual target") {
                     Text("No AI target matched confidently. Choose one of the eligible existing sessions below.")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
             }
 
             Card("Target session") {
                 if request.targets.isEmpty {
                     Text("This run has no eligible target sessions. Regenerate the run in the dashboard.")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DashboardTheme.danger)
                 } else {
                     Picker("Send to", selection: $targetID) {
                         ForEach(pickerTargets) { candidate in
@@ -79,11 +79,11 @@ struct ReviewView: View {
                     if let pinned = request.pinnedTargetID, !request.allowsTargetOverride {
                         Text("This rejected run is pinned to the target it was sent to. Changing the target requires regenerating the suggestion.")
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(DashboardTheme.warning)
                         if selectedTarget == nil {
                             Text("Pinned session \(pinned) is not in the current discovered candidate list. Regenerate before retrying.")
                                 .font(.caption)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(DashboardTheme.danger)
                         }
                     }
                     if let selectedTarget {
@@ -91,16 +91,16 @@ struct ReviewView: View {
                             .font(.callout.weight(.medium))
                         Text(selectedTarget.directory)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                             .textSelection(.enabled)
                         Text(selectedTarget.sessionId)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                             .textSelection(.enabled)
                     }
                     Text("Only sessions discovered for this exact project directory are listed. The relay revalidates the target before invoking OpenCode.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
             }
 
@@ -122,13 +122,13 @@ struct ReviewView: View {
             if let error = model.reviewError {
                 Text(error)
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DashboardTheme.danger)
                     .textSelection(.enabled)
             }
 
             Text("The relay sends this stored prompt text unchanged to the selected existing session. The message ID is deterministic, but a timeout can still make delivery uncertain.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DashboardTheme.muted)
 
             HStack {
                 Button("Defer") {
@@ -143,7 +143,7 @@ struct ReviewView: View {
                 Button("Send to OpenCode…") {
                     showSendConfirmation = true
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(HighlitePrimaryButtonStyle())
                 .disabled(
                     !request.canSubmit(targetSessionID: targetID)
                         || model.isBusy("review-submit")
@@ -152,6 +152,8 @@ struct ReviewView: View {
         }
         .padding(DashboardStyle.pagePadding)
         .frame(minWidth: 780, minHeight: 660)
+        .background(DashboardTheme.canvas)
+        .tint(DashboardTheme.primary)
         .alert("Send this exact prompt?", isPresented: $showSendConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Send") {

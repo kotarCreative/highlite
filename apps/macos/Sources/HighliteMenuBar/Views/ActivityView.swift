@@ -14,7 +14,7 @@ struct ActivityView: View {
                     if let last = model.lastPollAt {
                         Text("Updated \(Display.relative(Int64(last.timeIntervalSince1970 * 1000)))")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
                     Button {
                         Task { await model.refreshActivity() }
@@ -52,7 +52,7 @@ struct ActivityView: View {
                                     .font(.caption.weight(.semibold))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
-                                    .background(Color.primary.opacity(0.06), in: Capsule())
+                                    .background(DashboardTheme.neutralSoft, in: Capsule())
                                 StatusPill(text: item.status, color: item.statusColor)
                                 if let title = item.title {
                                     Text(title)
@@ -62,12 +62,12 @@ struct ActivityView: View {
                                 Spacer()
                                 Text(Display.relative(item.updatedAtMs))
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(DashboardTheme.muted)
                             }
                             HStack(spacing: 12) {
                                 Text(item.sessionId)
                                     .font(.system(.caption2, design: .monospaced))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(DashboardTheme.muted)
                                 if let issueKey = item.issueKey {
                                     Text("Jira \(issueKey)")
                                         .font(.caption)
@@ -80,7 +80,7 @@ struct ActivityView: View {
                             if let error = item.error {
                                 Text(error)
                                     .font(.caption)
-                                    .foregroundStyle(.red)
+                                    .foregroundStyle(DashboardTheme.danger)
                                     .textSelection(.enabled)
                             }
                         }
@@ -102,13 +102,16 @@ struct ActivityView: View {
                                     }
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(HighlitePrimaryButtonStyle())
                         }
                     }
                     .padding(.vertical, 4)
                 }
+                .scrollContentBackground(.hidden)
+                .background(DashboardTheme.canvas)
             }
         }
+        .background(DashboardTheme.canvas)
         .task {
             await model.refreshActivity()
         }

@@ -33,14 +33,14 @@ struct OverviewView: View {
                             if let version = model.relay.relayVersion {
                                 Text("Compiler \(version)")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(DashboardTheme.muted)
                             }
                             Text(model.relay.baseURL.absoluteString)
                                 .font(.system(.caption, design: .monospaced))
                                 .textSelection(.enabled)
                             Text(model.relay.owned ? "Managed by this app" : "External or stopped relay")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DashboardTheme.muted)
                         }
                         Spacer()
                         VStack(alignment: .trailing, spacing: 8) {
@@ -60,6 +60,7 @@ struct OverviewView: View {
                                 Button("Start relay") {
                                     Task { await model.startRelay() }
                                 }
+                                .buttonStyle(HighlitePrimaryButtonStyle())
                                 .disabled(model.isBusy("relay"))
                             }
                             Button("Refresh") {
@@ -87,7 +88,7 @@ struct OverviewView: View {
                 Card("Site embed", icon: "chevron.left.forwardslash.chevron.right") {
                     Text("Add a script tag that sends captures from your site to this relay.")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("SDK asset path")
@@ -105,7 +106,7 @@ struct OverviewView: View {
                         }
                         Text("Serve packages/sdk/dist/highlite.iife.js at this path, or use a full asset URL.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
 
                     if let embedScript {
@@ -122,11 +123,11 @@ struct OverviewView: View {
                             systemImage: "info.circle"
                         )
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                     } else {
                         Label("Enter a valid SDK asset path or URL.", systemImage: "exclamationmark.triangle")
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(DashboardTheme.warning)
                     }
 
                     Label(
@@ -134,7 +135,7 @@ struct OverviewView: View {
                         systemImage: "lock.shield"
                     )
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
                 }
 
                 HStack(alignment: .top, spacing: DashboardStyle.sectionSpacing) {
@@ -147,14 +148,15 @@ struct OverviewView: View {
                                 : "Suggestions remain in the relay until you confirm or defer them."
                         )
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                         Button("Review next pending") {
                             Task { await model.reviewNextPending() }
                         }
+                        .buttonStyle(HighlitePrimaryButtonStyle())
                         .disabled(model.pendingCount == 0)
                         Text("Nothing is sent automatically. Deferring only hides the popup for that revision.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
 
                     Card("Setup", icon: "slider.horizontal.3") {
@@ -184,17 +186,17 @@ struct OverviewView: View {
                         "Highlite never looks at the focused application. OpenCode routing uses only bounded capture text and candidate session metadata, then waits for your confirmation in a native window."
                     )
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
                     Text("Provider and Jira credentials stay in the relay's private files. Only relay bearer tokens are stored in Keychain.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
 
                 Card("Relay log", icon: "text.alignleft") {
                     if model.relayLogs.isEmpty {
                         Text("No relay output captured yet.")
                             .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     } else {
                         CodeBlock(
                             text: model.relayLogs.suffix(80).joined(separator: "\n"),

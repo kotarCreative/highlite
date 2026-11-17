@@ -28,6 +28,7 @@ struct ProvidersView: View {
                     } label: {
                         Label("Add provider", systemImage: "plus")
                     }
+                    .buttonStyle(HighlitePrimaryButtonStyle())
                     Button {
                         Task { await model.refreshProviders() }
                     } label: {
@@ -56,12 +57,12 @@ struct ProvidersView: View {
                                     Text(provider.id)
                                         .font(.headline)
                                     if model.providers?.defaultProvider == provider.id {
-                                        StatusPill(text: "Default", color: .green)
+                                        StatusPill(text: "Default", color: DashboardTheme.success)
                                     }
                                     if provider.hasApiKey {
-                                        StatusPill(text: "Key stored", color: .blue)
+                                        StatusPill(text: "Key stored", color: DashboardTheme.primary)
                                     } else {
-                                        StatusPill(text: "No key", color: .secondary)
+                                        StatusPill(text: "No key", color: DashboardTheme.muted)
                                     }
                                 }
                                 Text("\(provider.kind.displayName) · \(provider.model)")
@@ -69,12 +70,12 @@ struct ProvidersView: View {
                                 if !provider.baseUrl.isEmpty {
                                     Text(provider.baseUrl)
                                         .font(.system(.caption, design: .monospaced))
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(DashboardTheme.muted)
                                         .textSelection(.enabled)
                                 }
                                 Text("Saved, not verified")
                                     .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(DashboardTheme.muted)
                             }
                             Spacer()
                             Button("Edit") {
@@ -104,6 +105,8 @@ struct ProvidersView: View {
                         .padding(.vertical, 5)
                     }
                 }
+                .scrollContentBackground(.hidden)
+                .background(DashboardTheme.canvas)
             } else {
                 EmptyHint(
                     title: "No providers configured",
@@ -240,28 +243,28 @@ private struct ProviderEditorView: View {
                 if canPreserveStoredKey {
                     Text("The stored API key is reused only for this unchanged kind and endpoint.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 } else if explicitlyClearingKey {
                     Text("The stored API key will be removed. This cannot be undone.")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DashboardTheme.warning)
                 } else {
                     Text("Changing the provider kind or endpoint requires re-entering the API key. The old key will not be silently reused.")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DashboardTheme.warning)
                 }
             }
             if let errorText {
                 Text(errorText)
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DashboardTheme.danger)
                     .textSelection(.enabled)
             }
 
             HStack {
                 Text("Credentials are saved by the relay in its private configuration and are never shown again.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Save") {
@@ -286,7 +289,7 @@ private struct ProviderEditorView: View {
                         }
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(HighlitePrimaryButtonStyle())
                 .disabled(
                     saving
                         || model.isBusy("provider-save")
@@ -297,5 +300,6 @@ private struct ProviderEditorView: View {
         }
         .padding(18)
         .frame(width: 520)
+        .background(DashboardTheme.canvas)
     }
 }

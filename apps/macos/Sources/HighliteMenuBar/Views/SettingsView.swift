@@ -26,14 +26,14 @@ struct SettingsView: View {
                         TextField("Allowed browser origins", text: $origins)
                         Text("Comma-separated origins, for example https://app.example.com. The native app itself does not need an Origin entry. Leave blank to remove the allowlist entry.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                         HStack {
                             TextField("Relay binary (optional)", text: $binaryPath)
                             Button("Choose…") { chooseBinary() }
                         }
                         Text("Resolution order: this path, HIGHLITE_RELAY_BIN, the bundled Contents/Resources/highlite-relay, then target/release/highlite-relay.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
 
                     Section("Relay state") {
@@ -60,7 +60,7 @@ struct SettingsView: View {
                     Button("Save and restart relay") {
                         Task { await apply() }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(HighlitePrimaryButtonStyle())
                     .disabled(applying || model.isBusy("settings"))
                 }
 
@@ -68,10 +68,10 @@ struct SettingsView: View {
                     transcriptionStatus
                     Text("On first launch Highlite downloads the Parakeet engine, the English 110M Q8 model, and a pinned LGPL audio decoder once. Checksums are verified before use. The app stays usable while this runs.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                     Text("If relay.env already defines a transcriber command or Parakeet paths outside this app, those values are preserved and automatic setup is skipped; Highlite does not verify them. An external relay is never restarted; restart it yourself to load the new settings.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                     DisclosureGroup("Model and license notices") {
                         Text(TranscriptionLicenseNotice.text)
                             .font(.system(.caption2, design: .monospaced))
@@ -88,13 +88,13 @@ struct SettingsView: View {
                     pathRow("Narration models", value: paths.transcriptionDirectory.path)
                     Text("Provider and Jira credentials are the relay's existing private files in the config directory. This app does not read them and does not claim Keychain protection for them.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
 
                 Card("Relay tokens") {
                     Text("Read and ingest bearer tokens are generated once, stored in Keychain, and mirrored into the private relay environment file. They are never logged.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                     HStack {
                         CopyButton(title: "Copy read token", value: model.readToken)
                         CopyButton(title: "Copy ingest token", value: model.ingestToken)
@@ -102,19 +102,19 @@ struct SettingsView: View {
                     }
                     Text(model.readToken == nil ? "Tokens will appear after the relay starts." : "Tokens are loaded for this session.")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
 
                 Card("Suggestion popup history") {
                     Text("Deferring a suggestion persists its review key so the same revision does not interrupt you again. Clear this history to allow notifications for still-pending runs.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                     Button("Clear popup and defer history") {
                         model.clearNotificationHistory()
                     }
                     Text("This does not submit, dismiss, or delete any relay run.")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
             }
             .padding(DashboardStyle.pagePadding)
@@ -139,23 +139,23 @@ struct SettingsView: View {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Checking narration setup…")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
             }
         case .custom(let reason):
             LabeledContent("Status", value: "Preserved relay.env configuration")
             Text(reason)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DashboardTheme.muted)
             Text("Highlite did not change or verify these settings. Narration only works if the named command and paths exist and are valid; otherwise the relay reports a capture warning or an upload error.")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DashboardTheme.muted)
         case .downloading(let stage, let completed, let total):
             Text(stage)
             if let fraction = model.transcription.fraction {
                 ProgressView(value: fraction)
                 Text("\(bytes(completed)) of \(bytes(total))")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
             } else {
                 ProgressView().controlSize(.small)
             }
@@ -163,7 +163,7 @@ struct SettingsView: View {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text(stage)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
             }
         case .ready(let installation):
             LabeledContent("Status", value: "Ready")
@@ -183,7 +183,7 @@ struct SettingsView: View {
             LabeledContent("Status", value: "Setup failed")
             Text(message)
                 .font(.caption)
-                .foregroundStyle(.red)
+                .foregroundStyle(DashboardTheme.danger)
                 .textSelection(.enabled)
             HStack {
                 Button("Retry narration setup") {

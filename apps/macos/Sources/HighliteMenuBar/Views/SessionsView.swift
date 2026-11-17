@@ -52,6 +52,8 @@ struct SessionsView: View {
                         maxWidth: 380,
                         maxHeight: .infinity
                     )
+                    .scrollContentBackground(.hidden)
+                    .background(DashboardTheme.canvas)
 
                     if let selected = model.selectedSession {
                         SessionDetailView(model: model, session: selected)
@@ -96,11 +98,11 @@ private struct SessionRow: View {
             }
             Text(Display.relative(session.receivedAtMs))
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DashboardTheme.muted)
             if let url = session.pageUrl, !url.isEmpty {
                 Text(url)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
                     .lineLimit(1)
             }
         }
@@ -125,7 +127,7 @@ private struct SessionDetailView: View {
                     if let url = session.pageUrl, !url.isEmpty {
                         Text(url)
                             .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                             .textSelection(.enabled)
                     }
                     HStack(spacing: 14) {
@@ -134,13 +136,13 @@ private struct SessionDetailView: View {
                         Text("Duration \(Display.duration(session.durationMs))")
                     }
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
                 }
 
                 if let error = session.error {
                     Text(error)
                         .font(.callout)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DashboardTheme.danger)
                         .textSelection(.enabled)
                 }
 
@@ -188,7 +190,7 @@ private struct JiraRunSection: View {
                     StatusPill(text: run.status.label, color: run.status.color)
                     Text("Revision \(run.revision)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                     Spacer()
                     if run.status == .failed || run.status == .draft {
                         Button(run.status == .failed ? "Regenerate" : "Generate again") {
@@ -201,7 +203,7 @@ private struct JiraRunSection: View {
                 if let error = run.error {
                     Text(error)
                         .font(.callout)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DashboardTheme.danger)
                         .textSelection(.enabled)
                 }
 
@@ -210,14 +212,14 @@ private struct JiraRunSection: View {
                         ProgressView()
                             .controlSize(.small)
                         Text(run.status == .publishing ? "Publishing to Jira..." : "Generating a draft from the capture...")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
                 }
 
                 if let provider = run.provider {
                     Text("\(provider.id) · \(provider.model)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
 
                 if let draft = run.draft {
@@ -233,7 +235,7 @@ private struct JiraRunSection: View {
                             .frame(minHeight: 150)
                             .overlay {
                                 RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color.primary.opacity(0.15))
+                                    .strokeBorder(DashboardTheme.lineStrong)
                             }
                     }
 
@@ -247,6 +249,7 @@ private struct JiraRunSection: View {
                                 )
                             }
                         }
+                        .buttonStyle(HighlitePrimaryButtonStyle())
                         .disabled(
                             run.status != .draft
                                 || summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -270,42 +273,43 @@ private struct JiraRunSection: View {
                             ? "Save the edited draft before publishing."
                             : "Publishing uses this saved revision.")
                             .font(.caption)
-                            .foregroundStyle(draftIsDirty ? Color.orange : Color.secondary)
+                            .foregroundStyle(draftIsDirty ? DashboardTheme.warning : DashboardTheme.muted)
                     }
                     if let draft = run.draft {
                         Text("Draft loaded: \(draft.summary.count) summary characters, \(draft.description.count) description characters.")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
                 }
 
                 if run.status == .published, let issueKey = run.issueKey {
                     Text("Published \(issueKey)")
                         .font(.callout.weight(.medium))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(DashboardTheme.success)
                 }
                 if run.status == .publishUnknown {
                     Text("Publication is uncertain. Check Jira for the issue before trying again; the relay will not retry automatically.")
                         .font(.callout)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DashboardTheme.danger)
                 }
 
                 if run.status == .draft, let draft = run.draft {
                     Text("Draft preview: \(draft.summary)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                         .lineLimit(1)
                 }
             } else {
                 Text("No Jira draft for this capture yet.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
                 Button("Generate Jira draft") {
                     Task { await model.startJiraDraft(sessionId: session.sessionId) }
                 }
+                .buttonStyle(HighlitePrimaryButtonStyle())
                 .disabled(model.isBusy("jira-start") || !model.relay.isRunning)
                 Text("Configure the Jira recipe and a default AI provider first. Draft generation is reviewed before publication.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
             }
         }
         .alert("Publish this draft to Jira?", isPresented: $showPublish) {
@@ -361,7 +365,7 @@ private struct OpenCodeRunSection: View {
                     StatusPill(text: run.status.label, color: run.status.color)
                     Text("Revision \(run.revision)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                     Spacer()
                     if canRegenerate {
                         Button(run.status == .failed ? "Regenerate suggestion" : "Regenerate with saved settings") {
@@ -374,18 +378,18 @@ private struct OpenCodeRunSection: View {
                 if run.status == .suggested, analysisInputsChanged {
                     Text("Saved OpenCode settings changed since this suggestion. Regenerating creates a new revision; otherwise this suggestion remains the review target.")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DashboardTheme.warning)
                 }
                 if run.status == .submitted || run.status == .submitUnknown {
                     Text("This run is terminal and cannot be analyzed again, even if recipe settings change. It remains as the delivery record.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
 
                 if let error = run.error {
                     Text(error)
                         .font(.callout)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DashboardTheme.danger)
                         .textSelection(.enabled)
                 }
 
@@ -394,7 +398,7 @@ private struct OpenCodeRunSection: View {
                         ProgressView()
                             .controlSize(.small)
                         Text(run.status == .submitting ? "Submitting after confirmation..." : "Ranking eligible sessions from bounded metadata...")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
                 }
 
@@ -407,12 +411,12 @@ private struct OpenCodeRunSection: View {
                                 .font(.callout.weight(.medium))
                             StatusPill(
                                 text: suggestion.confidence.rawValue.capitalized,
-                                color: suggestion.confidence == .high ? .green : (suggestion.confidence == .medium ? .orange : .secondary)
+                                color: suggestion.confidence == .high ? DashboardTheme.success : (suggestion.confidence == .medium ? DashboardTheme.warning : DashboardTheme.muted)
                             )
                         }
                         Text(suggestion.directory)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                             .textSelection(.enabled)
                         Text(suggestion.reason)
                             .font(.callout)
@@ -421,13 +425,13 @@ private struct OpenCodeRunSection: View {
                 } else if run.status == .suggested {
                     Text("No AI target was selected. Choose any eligible session manually in the confirmation window.")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
 
                 if let target = run.opencodeTitle ?? run.suggestion?.title {
                     Text("Current target: \(target)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
 
                 if run.status == .suggested {
@@ -438,10 +442,10 @@ private struct OpenCodeRunSection: View {
                                 sessionTitle: session.pageTitle ?? "Captured session"
                             )
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(HighlitePrimaryButtonStyle())
                         Text("Exact prompt and target are shown before anything is sent.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
                 } else if run.status == .failed,
                           OpenCodeReviewTargeting.pinnedTargetID(run) != nil,
@@ -456,19 +460,19 @@ private struct OpenCodeRunSection: View {
                         }
                         Text("Only a clear OpenCode rejection can be retried; the relay revalidates the revision and target.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
                 }
 
                 if run.status == .submitted {
                     Text("Sent to \(run.opencodeTitle ?? run.opencodeSessionId ?? "OpenCode") at \(Display.date(run.submittedAtMs)).")
                         .font(.callout)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(DashboardTheme.success)
                 }
                 if run.status == .submitUnknown {
                     Text("Delivery is uncertain. Check OpenCode manually. The app and relay do not retry automatically.")
                         .font(.callout)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DashboardTheme.danger)
                 }
 
                 DisclosureGroup("Prompt preview (exact text)") {
@@ -490,34 +494,35 @@ private struct OpenCodeRunSection: View {
                                     .lineLimit(1)
                                 Text(candidate.projectName)
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(DashboardTheme.muted)
                                 Spacer()
                                 if run.eligibleSessionIds.contains(candidate.sessionId) {
                                     Image(systemName: "checkmark.circle")
-                                        .foregroundStyle(.green)
+                                        .foregroundStyle(DashboardTheme.success)
                                 }
                             }
                             Text(candidate.directory)
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DashboardTheme.muted)
                         }
                     }
                 }
 
                 Text("Directory: \(run.settings.directory)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
                     .textSelection(.enabled)
             } else {
                 Text("No OpenCode suggestion for this capture yet.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
                 Button("Analyze eligible sessions") {
                     Task { await model.startOpenCodeRun(sessionId: session.sessionId) }
                 }
+                .buttonStyle(HighlitePrimaryButtonStyle())
                 .disabled(model.isBusy("opencode-start") || !model.relay.isRunning)
                 Text("Only existing OpenCode sessions in the configured exact directory are eligible. Nothing is sent until you confirm a native review window.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
             }
         }
     }

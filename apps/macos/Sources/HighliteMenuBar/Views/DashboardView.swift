@@ -22,6 +22,8 @@ struct DashboardView: View {
                     .tag(section)
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(DashboardTheme.canvas)
             .navigationSplitViewColumnWidth(
                 min: AppWindowLayout.sidebarMinimumWidth,
                 ideal: AppWindowLayout.sidebarIdealWidth,
@@ -66,8 +68,10 @@ struct DashboardView: View {
                 maxHeight: .infinity,
                 alignment: .topLeading
             )
+            .background(DashboardTheme.canvas)
         }
         .navigationTitle("Highlite")
+        .tint(DashboardTheme.primary)
     }
 }
 
@@ -85,16 +89,18 @@ private struct SidebarRelayStatus: View {
             if let version = model.relay.relayVersion {
                 Text("v\(version)")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardTheme.muted)
                     .lineLimit(1)
                     .textSelection(.enabled)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(.thinMaterial)
+        .background(DashboardTheme.canvas)
         .overlay(alignment: .top) {
-            Divider()
+            Rectangle()
+                .fill(DashboardTheme.line)
+                .frame(height: 1)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Relay \(model.relay.phase.label)")

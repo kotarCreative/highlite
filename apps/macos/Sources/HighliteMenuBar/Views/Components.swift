@@ -47,9 +47,10 @@ struct BannerView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: isError ? "exclamationmark.triangle.fill" : "info.circle.fill")
-                .foregroundStyle(isError ? Color.red : Color.blue)
+                .foregroundStyle(isError ? DashboardTheme.danger : DashboardTheme.primary)
             Text(message)
                 .font(.callout)
+                .foregroundStyle(DashboardTheme.ink)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
@@ -57,12 +58,15 @@ struct BannerView: View {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.borderless)
+            .foregroundStyle(DashboardTheme.muted)
             .help("Dismiss")
         }
         .padding(12)
-        .background((isError ? Color.red : Color.blue).opacity(0.08))
+        .background(isError ? DashboardTheme.dangerSoft : DashboardTheme.primarySoft)
         .overlay(alignment: .bottom) {
-            Divider()
+            Rectangle()
+                .fill(DashboardTheme.line)
+                .frame(height: 1)
         }
     }
 }
@@ -78,6 +82,10 @@ struct StatusPill: View {
             .padding(.vertical, 3)
             .foregroundStyle(color)
             .background(color.opacity(0.12), in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(color.opacity(0.3), lineWidth: 1)
+            }
     }
 }
 
@@ -165,10 +173,17 @@ struct PageHeader<Trailing: View>: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.title2.weight(.semibold))
+                    .foregroundStyle(DashboardTheme.ink)
+                    .background(alignment: .bottom) {
+                        DashboardTheme.highlightYellow
+                            .opacity(0.6)
+                            .frame(height: 7)
+                            .offset(y: 2)
+                    }
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -207,10 +222,11 @@ struct Card<Content: View>: View {
                 HStack(spacing: 7) {
                     if let icon {
                         Image(systemName: icon)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.primary)
                     }
                     Text(title)
                         .font(.headline)
+                        .foregroundStyle(DashboardTheme.ink)
                 }
             }
             content
@@ -218,13 +234,14 @@ struct Card<Content: View>: View {
         .padding(DashboardStyle.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Color(nsColor: .controlBackgroundColor),
+            DashboardTheme.surface,
             in: RoundedRectangle(cornerRadius: DashboardStyle.cardCornerRadius)
         )
         .overlay {
             RoundedRectangle(cornerRadius: DashboardStyle.cardCornerRadius)
-                .strokeBorder(Color(nsColor: .separatorColor))
+                .strokeBorder(DashboardTheme.line)
         }
+        .shadow(color: DashboardTheme.shadow.opacity(0.06), radius: 8, x: 0, y: 4)
     }
 }
 
@@ -251,18 +268,19 @@ struct CodeBlock: View {
             alignment: .topLeading
         )
         .background(
-            Color(nsColor: .textBackgroundColor),
+            DashboardTheme.surfaceMuted,
             in: RoundedRectangle(cornerRadius: DashboardStyle.codeCornerRadius)
         )
         .overlay {
             RoundedRectangle(cornerRadius: DashboardStyle.codeCornerRadius)
-                .strokeBorder(Color(nsColor: .separatorColor))
+                .strokeBorder(DashboardTheme.line)
         }
     }
 
     private var code: some View {
         Text(text)
             .font(.system(size: DashboardStyle.codeFontSize, design: .monospaced))
+            .foregroundStyle(DashboardTheme.ink)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -279,12 +297,13 @@ struct EmptyHint: View {
         VStack(spacing: 8) {
             Image(systemName: systemImage)
                 .font(.system(size: 22, weight: .regular))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(DashboardTheme.primary.opacity(0.7))
             Text(title)
                 .font(.headline)
+                .foregroundStyle(DashboardTheme.ink)
             Text(detail)
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DashboardTheme.muted)
                 .multilineTextAlignment(.center)
         }
         .padding(20)
@@ -331,8 +350,8 @@ extension SessionStatus {
 
     var color: Color {
         switch self {
-        case .ready: return .green
-        case .failed: return .red
+        case .ready: return DashboardTheme.success
+        case .failed: return DashboardTheme.danger
         }
     }
 }
@@ -342,10 +361,10 @@ extension RelayPhase {
 
     var color: Color {
         switch self {
-        case .running: return .green
-        case .checking, .starting, .stopping: return .orange
-        case .failed: return .red
-        case .stopped: return .secondary
+        case .running: return DashboardTheme.success
+        case .checking, .starting, .stopping: return DashboardTheme.warning
+        case .failed: return DashboardTheme.danger
+        case .stopped: return DashboardTheme.muted
         }
     }
 }
@@ -365,9 +384,9 @@ extension JiraRunStatus {
 
     var color: Color {
         switch self {
-        case .draft, .published: return .green
-        case .failed, .publishUnknown: return .red
-        case .queued, .analyzing, .publishing: return .orange
+        case .draft, .published: return DashboardTheme.success
+        case .failed, .publishUnknown: return DashboardTheme.danger
+        case .queued, .analyzing, .publishing: return DashboardTheme.warning
         }
     }
 }
@@ -387,19 +406,19 @@ extension OpenCodeRunStatus {
 
     var color: Color {
         switch self {
-        case .suggested, .submitted: return .green
-        case .failed, .submitUnknown: return .red
-        case .queued, .analyzing, .submitting: return .orange
+        case .suggested, .submitted: return DashboardTheme.success
+        case .failed, .submitUnknown: return DashboardTheme.danger
+        case .queued, .analyzing, .submitting: return DashboardTheme.warning
         }
     }
 }
 
 extension ActivityItem {
     var statusColor: Color {
-        if status.contains("fail") || status.contains("unknown") { return .red }
+        if status.contains("fail") || status.contains("unknown") { return DashboardTheme.danger }
         if status.contains("publish") || status.contains("submit") || status.contains("suggest") {
-            return .green
+            return DashboardTheme.success
         }
-        return .orange
+        return DashboardTheme.warning
     }
 }

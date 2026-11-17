@@ -21,7 +21,7 @@ struct JiraRecipeView: View {
                 ) {
                     StatusPill(
                         text: settings.enabled ? "Enabled" : "Disabled",
-                        color: settings.enabled ? .green : .secondary
+                        color: settings.enabled ? DashboardTheme.success : DashboardTheme.muted
                     )
                 }
 
@@ -57,12 +57,12 @@ struct JiraRecipeView: View {
                             if let name = model.jiraConnection?.displayName {
                                 Text("Last test connected as \(name)")
                                     .font(.caption)
-                                    .foregroundStyle(.green)
+                                    .foregroundStyle(DashboardTheme.success)
                             }
                         }
                         Text("A blank token is omitted from requests. Discovery may use the saved token only when the site URL and email match.")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
 
                     Section("Destination") {
@@ -70,7 +70,7 @@ struct JiraRecipeView: View {
                             TextField("Project key", text: $settings.jira.projectKey)
                             Text("Test the connection to load project choices.")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DashboardTheme.muted)
                         } else {
                             Picker("Project", selection: Binding(
                                 get: { settings.jira.projectKey },
@@ -104,7 +104,7 @@ struct JiraRecipeView: View {
                             }
                             Text("Issue types are fetched for the selected project.")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DashboardTheme.muted)
                         } else {
                             Picker("Issue type", selection: $settings.jira.issueTypeId) {
                                 if !settings.jira.issueTypeId.isEmpty,
@@ -129,11 +129,11 @@ struct JiraRecipeView: View {
                             .frame(height: 80)
                             .overlay {
                                 RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color.primary.opacity(0.15))
+                                    .strokeBorder(DashboardTheme.lineStrong)
                             }
                         Text("Static Jira field mappings only. summary, description, project, and issuetype cannot be overridden.")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
 
                     Section("AI instructions") {
@@ -142,11 +142,11 @@ struct JiraRecipeView: View {
                             .frame(minHeight: 140)
                             .overlay {
                                 RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color.primary.opacity(0.15))
+                                    .strokeBorder(DashboardTheme.lineStrong)
                             }
                         Text("Capture content is treated as untrusted evidence. Review every draft before publishing.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
                 }
                 .formStyle(.grouped)
@@ -165,14 +165,14 @@ struct JiraRecipeView: View {
                     Button("Save Jira recipe") {
                         Task { await save() }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(HighlitePrimaryButtonStyle())
                     .disabled(model.isBusy("jira-save"))
                 }
 
                 Card("Where credentials live") {
                     Text("The Jira API token is stored by the relay in its private plaintext configuration file. It is not migrated to Keychain. Only this app's relay bearer tokens use Keychain.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
             }
             .padding(DashboardStyle.pagePadding)

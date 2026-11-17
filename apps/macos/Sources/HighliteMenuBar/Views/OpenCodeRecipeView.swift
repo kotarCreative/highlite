@@ -16,7 +16,7 @@ struct OpenCodeRecipeView: View {
                 ) {
                     StatusPill(
                         text: settings.enabled ? "Enabled" : "Disabled",
-                        color: settings.enabled ? .green : .secondary
+                        color: settings.enabled ? DashboardTheme.success : DashboardTheme.muted
                     )
                 }
 
@@ -38,7 +38,7 @@ struct OpenCodeRecipeView: View {
                         }
                         Text("Required when enabled. Only OpenCode sessions whose location.directory exactly equals this path are eligible. Subtrees are not included.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
 
                     Section("OpenCode CLI") {
@@ -62,16 +62,16 @@ struct OpenCodeRecipeView: View {
                         }
                         Text("Resolution order: this path, HIGHLITE_OPENCODE_BIN, then opencode on an augmented PATH that includes /opt/homebrew/bin, /usr/local/bin, and ~/.opencode/bin.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                         if let message = model.cliValidationMessage {
                             Text(message)
                                 .font(.caption)
-                                .foregroundStyle(message.contains("responded") ? Color.green : Color.red)
+                                .foregroundStyle(message.contains("responded") ? DashboardTheme.success : DashboardTheme.danger)
                                 .textSelection(.enabled)
                         }
                         Text("The local check runs `opencode api server.info` with no shell. The relay separately invokes the authenticated CLI for discovery and submission.")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
 
                     Section("Instructions") {
@@ -80,11 +80,11 @@ struct OpenCodeRecipeView: View {
                             .frame(minHeight: 140)
                             .overlay {
                                 RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color.primary.opacity(0.15))
+                                    .strokeBorder(DashboardTheme.lineStrong)
                             }
                         Text("AI routing receives only the first 4 KiB of the capture summary plus candidate ID, title, directory, project, and timestamps. Capture content is untrusted evidence, not instructions.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DashboardTheme.muted)
                     }
                 }
                 .formStyle(.grouped)
@@ -114,7 +114,7 @@ struct OpenCodeRecipeView: View {
                             }
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(HighlitePrimaryButtonStyle())
                     .disabled(model.isBusy("opencode-save") || model.isBusy("opencode-discover"))
                 }
 
@@ -128,7 +128,7 @@ struct OpenCodeRecipeView: View {
                         if discovery.sessions.isEmpty {
                             Text("No eligible root sessions were found for this exact directory.")
                                 .font(.callout)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DashboardTheme.muted)
                         } else {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(discovery.sessions) { session in
@@ -138,15 +138,15 @@ struct OpenCodeRecipeView: View {
                                                 .font(.callout.weight(.medium))
                                             Text(session.projectName)
                                                 .font(.caption)
-                                                .foregroundStyle(.secondary)
+                                                .foregroundStyle(DashboardTheme.muted)
                                             Spacer()
                                             Text("Updated \(Display.relative(session.updatedAtMs))")
                                                 .font(.caption2)
-                                                .foregroundStyle(.secondary)
+                                                .foregroundStyle(DashboardTheme.muted)
                                         }
                                         Text(session.directory)
                                             .font(.system(.caption2, design: .monospaced))
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(DashboardTheme.muted)
                                     }
                                     .padding(.vertical, 2)
                                 }
@@ -161,7 +161,7 @@ struct OpenCodeRecipeView: View {
                                         Spacer()
                                         Text(project.canonical)
                                             .font(.system(.caption2, design: .monospaced))
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(DashboardTheme.muted)
                                     }
                                 }
                             }
@@ -172,7 +172,7 @@ struct OpenCodeRecipeView: View {
                 Card("Review is mandatory") {
                     Text("A suggested run opens a native confirmation window with the exact prompt and a target chooser. Nothing is submitted until you press the send button there. Deferring leaves the run pending in the relay and the menu bar badge.")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DashboardTheme.muted)
                 }
             }
             .padding(DashboardStyle.pagePadding)
