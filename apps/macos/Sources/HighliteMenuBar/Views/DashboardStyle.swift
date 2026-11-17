@@ -12,6 +12,8 @@ enum DashboardStyle {
     static let codeCornerRadius: CGFloat = 8
     static let codeFontSize: CGFloat = 11
 
-    static let copyButtonMinimumWidth: CGFloat = 124
+    /// Keeps a copy action from changing width when its label switches to a
+    /// shorter confirmation. Longer localized labels can still grow.
+    static let copyButtonMinimumWidth: CGFloat = 168
     static let emptyStateMinimumHeight: CGFloat = 120
 }
