@@ -13,6 +13,7 @@ APP_BUNDLE="$ROOT/dist/Highlite.app"
 TMP_BUNDLE="$ROOT/dist/.Highlite.app.tmp.$$"
 BACKUP_BUNDLE="$ROOT/dist/.Highlite.app.backup.$$"
 INFO_PLIST="$APP_DIR/Resources/Info.plist"
+APP_ICON="$APP_DIR/Resources/AppIcon.icns"
 RELAY_BIN="$ROOT/target/release/highlite-relay"
 SWAP_DONE=0
 FINAL_VERIFIED=0
@@ -63,6 +64,7 @@ done
 [[ -d "$APP_DIR" ]] || fail "missing Swift package at $APP_DIR"
 [[ -f "$APP_DIR/Package.swift" ]] || fail "missing $APP_DIR/Package.swift"
 [[ -f "$INFO_PLIST" ]] || fail "missing $INFO_PLIST"
+[[ -f "$APP_ICON" ]] || fail "missing $APP_ICON"
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -89,6 +91,7 @@ note "Assembling $TMP_BUNDLE"
 install -d "$TMP_BUNDLE/Contents/MacOS" "$TMP_BUNDLE/Contents/Resources"
 install -m 755 "$APP_BIN" "$TMP_BUNDLE/Contents/MacOS/$APP_NAME"
 install -m 644 "$INFO_PLIST" "$TMP_BUNDLE/Contents/Info.plist"
+install -m 644 "$APP_ICON" "$TMP_BUNDLE/Contents/Resources/AppIcon.icns"
 install -m 755 "$RELAY_BIN" "$TMP_BUNDLE/Contents/Resources/highlite-relay"
 
 MAIN_BIN="$TMP_BUNDLE/Contents/MacOS/$APP_NAME"
@@ -96,8 +99,15 @@ SIDECAR_BIN="$TMP_BUNDLE/Contents/Resources/highlite-relay"
 BUNDLED_EXECUTABLE="$(
   plutil -extract CFBundleExecutable raw -o - "$TMP_BUNDLE/Contents/Info.plist"
 )"
+BUNDLED_ICON="$(
+  plutil -extract CFBundleIconFile raw -o - "$TMP_BUNDLE/Contents/Info.plist"
+)"
 [[ "$BUNDLED_EXECUTABLE" == "$APP_NAME" ]] ||
   fail "Info.plist CFBundleExecutable is '$BUNDLED_EXECUTABLE', expected '$APP_NAME'"
+[[ "$BUNDLED_ICON" == "AppIcon.icns" ]] ||
+  fail "Info.plist CFBundleIconFile is '$BUNDLED_ICON', expected 'AppIcon.icns'"
+[[ -f "$TMP_BUNDLE/Contents/Resources/AppIcon.icns" ]] ||
+  fail "assembled app icon is missing"
 [[ -x "$MAIN_BIN" ]] || fail "assembled app executable is missing or not executable"
 [[ -x "$SIDECAR_BIN" ]] || fail "assembled relay sidecar is missing or not executable"
 

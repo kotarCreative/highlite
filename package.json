@@ -19,6 +19,7 @@
     "test:opencode": "cargo build -p highlite-relay && node scripts/opencode-recipe-smoke.mjs",
     "setup:macos": "bash scripts/setup-macos.sh",
     "build:macos": "bash scripts/build-macos-app.sh",
+    "generate:macos-icon": "python3 scripts/generate-macos-app-icon.py",
     "verify:macos": "bash scripts/verify-macos-app.sh",
     "rust:fmt": "cargo fmt --all -- --check",
     "rust:lint": "cargo clippy --workspace --all-targets -- -D warnings",

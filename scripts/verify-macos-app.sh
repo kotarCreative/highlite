@@ -38,6 +38,9 @@ require_grep() {
 note "Checking Swift package structure and product"
 require_file "$APP_DIR/Package.swift"
 require_file "$INFO_PLIST"
+require_file "$APP_DIR/Resources/AppIcon.svg"
+require_file "$APP_DIR/Resources/AppIcon.icns"
+require_file "$ROOT/scripts/generate-macos-app-icon.py"
 require_file "$APP_DIR/README.md"
 require_file "$APP_DIR/Sources/HighliteMenuBarCore/RelayModels.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBarCore/RelayClient.swift"
@@ -70,6 +73,7 @@ for expected in \
   '0.1.0' \
   '14.0' \
   'LSUIElement' \
+  'AppIcon.icns' \
   'NSAllowsLocalNetworking'; do
   grep -q "$expected" "$INFO_PLIST" || fail "Info.plist is missing expected value: $expected"
 done
@@ -85,6 +89,7 @@ with open(sys.argv[1], 'rb') as handle:
 expected = {
     'CFBundleIdentifier': 'com.highlite.menubar',
     'CFBundleExecutable': 'HighliteMenuBar',
+    'CFBundleIconFile': 'AppIcon.icns',
     'CFBundlePackageType': 'APPL',
     'CFBundleShortVersionString': '0.1.0',
     'CFBundleVersion': '1',
@@ -100,6 +105,38 @@ if value.get('NSAppTransportSecurity', {}).get('NSAllowsLocalNetworking') is not
 PY
 else
   note "python3 not found; plist key checks use text matching only"
+fi
+
+note "Checking the bundled highlighter icon"
+if command -v python3 >/dev/null 2>&1; then
+  python3 - "$APP_DIR/Resources/AppIcon.icns" <<'PY'
+import struct
+import sys
+
+path = sys.argv[1]
+with open(path, 'rb') as handle:
+    data = handle.read()
+if len(data) < 8 or data[:4] != b'icns':
+    raise SystemExit(f'{path} is not an ICNS file')
+declared = struct.unpack('>I', data[4:8])[0]
+if declared != len(data):
+    raise SystemExit(f'{path} has an inconsistent ICNS length')
+required = {'icp4', 'icp5', 'icp6', 'ic07', 'ic08', 'ic09', 'ic10'}
+found = set()
+offset = 8
+while offset < len(data):
+    kind = data[offset:offset + 4].decode('ascii', 'replace')
+    length = struct.unpack('>I', data[offset + 4:offset + 8])[0]
+    if length < 8 or offset + length > len(data):
+        raise SystemExit(f'{path} has an invalid ICNS element {kind}')
+    found.add(kind)
+    offset += length
+missing = required - found
+if missing:
+    raise SystemExit(f'{path} is missing icon sizes: {", ".join(sorted(missing))}')
+PY
+else
+  note "python3 not found; ICNS structure check skipped"
 fi
 
 note "Checking for forbidden focused-window and scripting APIs"
@@ -149,16 +186,23 @@ bash "$ROOT/scripts/build-macos-app.sh"
 
 MAIN_BIN="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 SIDECAR_BIN="$APP_BUNDLE/Contents/Resources/highlite-relay"
+ICON_BIN="$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
-note "Linting the bundled Info.plist and checking the declared executable"
+note "Linting the bundled Info.plist and checking the declared executable and icon"
 plutil -lint "$APP_BUNDLE/Contents/Info.plist"
 BUNDLED_EXECUTABLE="$(
   plutil -extract CFBundleExecutable raw -o - "$APP_BUNDLE/Contents/Info.plist"
 )"
+BUNDLED_ICON="$(
+  plutil -extract CFBundleIconFile raw -o - "$APP_BUNDLE/Contents/Info.plist"
+)"
 [[ "$BUNDLED_EXECUTABLE" == "$APP_NAME" ]] ||
   fail "CFBundleExecutable is '$BUNDLED_EXECUTABLE', expected '$APP_NAME'"
+[[ "$BUNDLED_ICON" == "AppIcon.icns" ]] ||
+  fail "CFBundleIconFile is '$BUNDLED_ICON', expected 'AppIcon.icns'"
 [[ -x "$MAIN_BIN" ]] || fail "missing executable Contents/MacOS/$APP_NAME"
 [[ -x "$SIDECAR_BIN" ]] || fail "missing executable Contents/Resources/highlite-relay"
+[[ -f "$ICON_BIN" ]] || fail "missing icon Contents/Resources/AppIcon.icns"
 
 note "Checking native architecture consistency"
 HOST_ARCH="$(uname -m)"

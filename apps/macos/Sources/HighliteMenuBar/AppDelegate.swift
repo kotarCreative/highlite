@@ -50,8 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
+            // Match the highlighter app icon in the menu bar. Keep a pencil
+            // fallback for older symbol sets instead of leaving a blank item.
             let image = NSImage(
-                systemSymbolName: "sparkles",
+                systemSymbolName: "highlighter",
+                accessibilityDescription: "Highlite"
+            ) ?? NSImage(
+                systemSymbolName: "pencil.tip",
                 accessibilityDescription: "Highlite"
             )
             image?.isTemplate = true
