@@ -96,6 +96,14 @@ try {
     stopBox && Math.abs(dockBox.x + dockBox.width - (stopBox.x + stopBox.width)) < 10,
     'The Stop action must sit at the far right of the dock.',
   );
+  const dockColors = await dock.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { background: style.backgroundColor, color: style.color };
+  });
+  assert.deepEqual(dockColors, {
+    background: 'rgb(48, 35, 45)',
+    color: 'rgb(255, 253, 245)',
+  });
 
   const circleTool = page.getByRole('button', { name: 'Circle annotation' });
   assert.equal(await circleTool.getAttribute('aria-keyshortcuts'), 'Control+C');
@@ -118,6 +126,16 @@ try {
       `The Control+${key.toUpperCase()} shortcut must select the ${label}.`,
     );
   }
+  const activeToolColors = await page
+    .getByRole('button', { name: 'Highlight annotation' })
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, color: style.color };
+    });
+  assert.deepEqual(activeToolColors, {
+    background: 'rgb(239, 255, 61)',
+    color: 'rgb(48, 35, 45)',
+  });
   await page.keyboard.press('Control+v');
   assert.equal(
     await circleTool.getAttribute('aria-pressed'),
