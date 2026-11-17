@@ -21,7 +21,11 @@ struct DashboardView: View {
                 Label(section.title, systemImage: section.icon)
                     .tag(section)
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+            .navigationSplitViewColumnWidth(
+                min: AppWindowLayout.sidebarMinimumWidth,
+                ideal: AppWindowLayout.sidebarIdealWidth,
+                max: AppWindowLayout.sidebarMaximumWidth
+            )
         } detail: {
             VStack(spacing: 0) {
                 if let error = model.errorMessage {
@@ -51,7 +55,13 @@ struct DashboardView: View {
                     SettingsView(model: model)
                 }
             }
-            .frame(minWidth: 780, minHeight: 580)
+            .frame(
+                minWidth: AppWindowLayout.detailMinimumWidth,
+                maxWidth: .infinity,
+                minHeight: AppWindowLayout.detailMinimumHeight,
+                maxHeight: .infinity,
+                alignment: .topLeading
+            )
         }
         .navigationTitle("Highlite")
     }

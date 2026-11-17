@@ -56,9 +56,11 @@ final class RelayEnvironmentTests: XCTestCase {
         let envMode = try permissions(at: paths.envFile)
         let configMode = try permissions(at: paths.configDirectory)
         let dataMode = try permissions(at: paths.dataDirectory)
+        let transcriptionMode = try permissions(at: paths.transcriptionDirectory)
         XCTAssertEqual(envMode, 0o600)
         XCTAssertEqual(configMode, 0o700)
         XCTAssertEqual(dataMode, 0o700)
+        XCTAssertEqual(transcriptionMode, 0o700)
     }
 
     func testPreparePreservesExistingTokenAndUnrelatedSettings() throws {
@@ -300,6 +302,246 @@ final class RelayEnvironmentTests: XCTestCase {
         )
         XCTAssertTrue(contents.contains("relay.env"))
         XCTAssertFalse(contents.contains { $0.hasPrefix(".relay.env.") && $0.hasSuffix(".tmp") })
+    }
+
+    func testTranscriptionConfigurationWritesKeysAndPreservesUnrelatedSettings() throws {
+        let (paths, root) = try temporaryPaths()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: paths.supportDirectory,
+            withIntermediateDirectories: true
+        )
+        let original = """
+        # manually managed
+        HIGHLITE_RELAY_MAX_UPLOAD_MB=32
+        CUSTOM_SETTING=keep-me
+        """
+        try Data(original.utf8).write(to: paths.envFile)
+
+        let bin = paths.transcriptionDirectory
+            .appendingPathComponent("current/engine/Highlite Tools/parakeet-cli").path
+        let model = paths.transcriptionDirectory
+            .appendingPathComponent("current/model/Parakeet Models/model.gguf").path
+        let ffmpeg = paths.transcriptionDirectory
+            .appendingPathComponent("current/decoder/FFmpeg Tools/ffmpeg").path
+        let outcome = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: bin,
+            parakeetModel: model,
+            ffmpeg: ffmpeg
+        )
+
+        XCTAssertFalse(outcome.isCustom)
+        XCTAssertTrue(outcome.wrote)
+        let values = try RelayEnvironment.readValues(paths: paths)
+        XCTAssertEqual(values[RelayEnvironment.parakeetBinKey], bin)
+        XCTAssertEqual(values[RelayEnvironment.parakeetModelKey], model)
+        XCTAssertEqual(values[RelayEnvironment.ffmpegKey], ffmpeg)
+        let text = try String(contentsOf: paths.envFile, encoding: .utf8)
+        XCTAssertTrue(text.contains("HIGHLITE_RELAY_MAX_UPLOAD_MB=32"))
+        XCTAssertTrue(text.contains("CUSTOM_SETTING=keep-me"))
+        let envMode = try permissions(at: paths.envFile)
+        XCTAssertEqual(envMode, 0o600)
+    }
+
+    func testTranscriptionConfigurationPreservesCustomTranscriberCommand() throws {
+        let (paths, root) = try temporaryPaths()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: paths.supportDirectory,
+            withIntermediateDirectories: true
+        )
+        let original = """
+        HIGHLITE_RELAY_TRANSCRIBER_COMMAND=python3 asr.py
+        """
+        try Data(original.utf8).write(to: paths.envFile)
+
+        let outcome = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: "/app/parakeet-cli",
+            parakeetModel: "/app/model.gguf",
+            ffmpeg: "/app/ffmpeg"
+        )
+
+        XCTAssertTrue(outcome.isCustom)
+        XCTAssertFalse(outcome.wrote)
+        XCTAssertEqual(outcome.preservedKeys, [RelayEnvironment.transcriberCommandKey])
+        let text = try String(contentsOf: paths.envFile, encoding: .utf8)
+        XCTAssertEqual(text, original)
+        let values = try RelayEnvironment.readValues(paths: paths)
+        XCTAssertNil(values[RelayEnvironment.parakeetBinKey])
+        XCTAssertNil(values[RelayEnvironment.parakeetModelKey])
+        XCTAssertNil(values[RelayEnvironment.ffmpegKey])
+    }
+
+    func testTranscriptionConfigurationPreservesCustomASRCommand() throws {
+        let (paths, root) = try temporaryPaths()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: paths.supportDirectory,
+            withIntermediateDirectories: true
+        )
+        let original = """
+        HIGHLITE_ASR_COMMAND=whisper-cli -m model.bin
+        """
+        try Data(original.utf8).write(to: paths.envFile)
+
+        let outcome = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: "/app/parakeet-cli",
+            parakeetModel: "/app/model.gguf",
+            ffmpeg: "/app/ffmpeg"
+        )
+
+        XCTAssertTrue(outcome.isCustom)
+        XCTAssertFalse(outcome.wrote)
+        XCTAssertEqual(outcome.preservedKeys, [RelayEnvironment.asrCommandKey])
+        let text = try String(contentsOf: paths.envFile, encoding: .utf8)
+        XCTAssertEqual(text, original)
+        let values = try RelayEnvironment.readValues(paths: paths)
+        XCTAssertNil(values[RelayEnvironment.parakeetBinKey])
+        XCTAssertNil(values[RelayEnvironment.parakeetModelKey])
+    }
+
+    func testTranscriptionConfigurationPreservesCustomParakeetPaths() throws {
+        let (paths, root) = try temporaryPaths()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: paths.supportDirectory,
+            withIntermediateDirectories: true
+        )
+        let original = """
+        HIGHLITE_RELAY_PARAKEET_BIN=/custom/parakeet-cli
+        HIGHLITE_RELAY_PARAKEET_MODEL=/custom/model.gguf
+        """
+        try Data(original.utf8).write(to: paths.envFile)
+
+        let outcome = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: "/app/parakeet-cli",
+            parakeetModel: "/app/model.gguf",
+            ffmpeg: "/app/ffmpeg"
+        )
+
+        XCTAssertTrue(outcome.isCustom)
+        XCTAssertFalse(outcome.wrote)
+        XCTAssertEqual(
+            Set(outcome.preservedKeys),
+            Set([RelayEnvironment.parakeetBinKey, RelayEnvironment.parakeetModelKey])
+        )
+        let text = try String(contentsOf: paths.envFile, encoding: .utf8)
+        XCTAssertEqual(text, original)
+    }
+
+    func testTranscriptionConfigurationReplacesOnlyAppOwnedPaths() throws {
+        let (paths, root) = try temporaryPaths()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: paths.supportDirectory,
+            withIntermediateDirectories: true
+        )
+        let oldBin = paths.transcriptionDirectory.appendingPathComponent("old/parakeet-cli").path
+        let oldModel = paths.transcriptionDirectory.appendingPathComponent("old/model.gguf").path
+        let oldFFmpeg = paths.transcriptionDirectory.appendingPathComponent("old/ffmpeg").path
+        let original = """
+        HIGHLITE_RELAY_PARAKEET_BIN=\(oldBin)
+        HIGHLITE_RELAY_PARAKEET_MODEL=\(oldModel)
+        HIGHLITE_RELAY_FFMPEG=\(oldFFmpeg)
+        """
+        try Data(original.utf8).write(to: paths.envFile)
+
+        let newBin = paths.transcriptionDirectory.appendingPathComponent("current/engine/parakeet-cli").path
+        let newModel = paths.transcriptionDirectory.appendingPathComponent("current/model/model.gguf").path
+        let newFFmpeg = paths.transcriptionDirectory.appendingPathComponent("current/decoder/ffmpeg").path
+        let outcome = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: newBin,
+            parakeetModel: newModel,
+            ffmpeg: newFFmpeg
+        )
+
+        XCTAssertFalse(outcome.isCustom)
+        XCTAssertTrue(outcome.wrote)
+        let values = try RelayEnvironment.readValues(paths: paths)
+        XCTAssertEqual(values[RelayEnvironment.parakeetBinKey], newBin)
+        XCTAssertEqual(values[RelayEnvironment.parakeetModelKey], newModel)
+        XCTAssertEqual(values[RelayEnvironment.ffmpegKey], newFFmpeg)
+    }
+
+    func testTranscriptionConfigurationPreservesCustomFFmpegOnly() throws {
+        let (paths, root) = try temporaryPaths()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: paths.supportDirectory,
+            withIntermediateDirectories: true
+        )
+        let original = """
+        HIGHLITE_RELAY_FFMPEG=/custom/ffmpeg
+        """
+        try Data(original.utf8).write(to: paths.envFile)
+
+        let bin = paths.transcriptionDirectory.appendingPathComponent("current/engine/parakeet-cli").path
+        let model = paths.transcriptionDirectory.appendingPathComponent("current/model/model.gguf").path
+        let outcome = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: bin,
+            parakeetModel: model,
+            ffmpeg: paths.transcriptionDirectory.appendingPathComponent("current/decoder/ffmpeg").path
+        )
+
+        XCTAssertFalse(outcome.isCustom)
+        XCTAssertTrue(outcome.wrote)
+        XCTAssertEqual(outcome.preservedKeys, [RelayEnvironment.ffmpegKey])
+        let values = try RelayEnvironment.readValues(paths: paths)
+        XCTAssertEqual(values[RelayEnvironment.parakeetBinKey], bin)
+        XCTAssertEqual(values[RelayEnvironment.parakeetModelKey], model)
+        XCTAssertEqual(values[RelayEnvironment.ffmpegKey], "/custom/ffmpeg")
+    }
+
+    func testTranscriptionConfigurationRemovesEmptyCommandKeys() throws {
+        let (paths, root) = try temporaryPaths()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: paths.supportDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("HIGHLITE_RELAY_TRANSCRIBER_COMMAND=\n".utf8).write(to: paths.envFile)
+        let bin = paths.transcriptionDirectory.appendingPathComponent("current/engine/parakeet-cli").path
+        let model = paths.transcriptionDirectory.appendingPathComponent("current/model/model.gguf").path
+        let ffmpeg = paths.transcriptionDirectory.appendingPathComponent("current/decoder/ffmpeg").path
+
+        _ = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: bin,
+            parakeetModel: model,
+            ffmpeg: ffmpeg
+        )
+
+        let values = try RelayEnvironment.readValues(paths: paths)
+        XCTAssertNil(values[RelayEnvironment.transcriberCommandKey])
+        XCTAssertEqual(values[RelayEnvironment.parakeetBinKey], bin)
+    }
+
+    func testTranscriptionConfigurationIsIdempotent() throws {
+        let (paths, root) = try temporaryPaths()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bin = paths.transcriptionDirectory.appendingPathComponent("current/engine/parakeet-cli").path
+        let model = paths.transcriptionDirectory.appendingPathComponent("current/model/model.gguf").path
+        let ffmpeg = paths.transcriptionDirectory.appendingPathComponent("current/decoder/ffmpeg").path
+        _ = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: bin,
+            parakeetModel: model,
+            ffmpeg: ffmpeg
+        )
+        let second = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: bin,
+            parakeetModel: model,
+            ffmpeg: ffmpeg
+        )
+        XCTAssertFalse(second.wrote)
+        XCTAssertFalse(second.isCustom)
     }
 
     private func permissions(at url: URL) throws -> Int {

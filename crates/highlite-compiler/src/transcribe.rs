@@ -215,9 +215,26 @@ pub struct ParakeetCliTranscriber {
 }
 
 impl ParakeetCliTranscriber {
+    /// Build a backend from explicit paths, falling back to environment
+    /// variables and `PATH` lookups for the binary, model, and ffmpeg.
     pub fn detect(
         model: Option<&Path>,
         binary: Option<&Path>,
+        language: Option<&str>,
+    ) -> Option<Self> {
+        Self::detect_with_ffmpeg(model, binary, None, language)
+    }
+
+    /// Like [`Self::detect`], but accepts an explicit ffmpeg path.
+    ///
+    /// Relay and app-managed installs know exactly which decoder they shipped,
+    /// so they should not depend on the relay's `PATH`. An explicit path is
+    /// used verbatim, including spaces; when it is `None`, `HIGHLITE_FFMPEG`
+    /// and then `PATH` are still consulted.
+    pub fn detect_with_ffmpeg(
+        model: Option<&Path>,
+        binary: Option<&Path>,
+        ffmpeg: Option<&Path>,
         language: Option<&str>,
     ) -> Option<Self> {
         let model = model
@@ -227,8 +244,9 @@ impl ParakeetCliTranscriber {
             .map(Path::to_path_buf)
             .or_else(|| std::env::var_os("HIGHLITE_PARAKEET_BIN").map(PathBuf::from))
             .or_else(|| find_in_path(&["parakeet-cli", "parakeet"]))?;
-        let ffmpeg = std::env::var_os("HIGHLITE_FFMPEG")
-            .map(PathBuf::from)
+        let ffmpeg = ffmpeg
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::var_os("HIGHLITE_FFMPEG").map(PathBuf::from))
             .or_else(|| find_in_path(&["ffmpeg"]))?;
 
         Some(Self {

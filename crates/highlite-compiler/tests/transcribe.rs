@@ -1,5 +1,6 @@
 use highlite_compiler::{
-    TranscriptSegment, WordTiming, parse_transcript_json, parse_whisper_json, shift_transcript,
+    ParakeetCliTranscriber, TranscriptSegment, WordTiming, parse_transcript_json,
+    parse_whisper_json, shift_transcript,
 };
 
 #[test]
@@ -141,6 +142,27 @@ fn parses_parakeet_words_and_groups_them_at_pauses() {
     assert_eq!(segments[1].text, "This is the chart.");
     assert_eq!(segments[1].start_ms, 1_500);
     assert_eq!(segments[1].end_ms, 2_200);
+}
+
+#[test]
+fn parakeet_detection_keeps_an_explicit_ffmpeg_path() {
+    let binary = std::path::PathBuf::from("/Applications/Highlite Tools/bin/parakeet-cli");
+    let model =
+        std::path::PathBuf::from("/Users/example/Library/Application Support/Parakeet/model.gguf");
+    let ffmpeg = std::path::PathBuf::from("/Applications/Highlite Tools/bin/ffmpeg");
+
+    let transcriber = ParakeetCliTranscriber::detect_with_ffmpeg(
+        Some(&model),
+        Some(&binary),
+        Some(&ffmpeg),
+        Some("en"),
+    )
+    .expect("explicit paths should be enough");
+
+    assert_eq!(transcriber.binary, binary);
+    assert_eq!(transcriber.model, model);
+    assert_eq!(transcriber.ffmpeg, ffmpeg);
+    assert_eq!(transcriber.language.as_deref(), Some("en"));
 }
 
 #[test]

@@ -26,7 +26,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HighliteMenuBarTests",
-            dependencies: ["HighliteMenuBar"]
+            dependencies: ["HighliteMenuBar", "HighliteMenuBarCore"]
         ),
     ]
 )

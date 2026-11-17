@@ -231,17 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     private func showDashboard() {
         if dashboardWindow == nil {
-            let hosting = NSHostingController(rootView: DashboardView(model: model))
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 1_040, height: 760),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Highlite"
-            window.contentViewController = hosting
-            window.minSize = NSSize(width: 840, height: 620)
-            window.isReleasedWhenClosed = false
+            let window = AppWindowFactory.makeDashboardWindow(model: model)
             window.delegate = self
             window.center()
             dashboardWindow = window
@@ -257,24 +247,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             Task { await model.selectSession(request.sessionId) }
         }
 
-        let hosting = NSHostingController(rootView: ReviewView(model: model, request: request))
         if let window = reviewWindow {
             window.title = "Confirm OpenCode send"
-            window.contentViewController = hosting
-            window.setContentSize(NSSize(width: 820, height: 700))
+            AppWindowFactory.attachReview(request, model: model, to: window)
             window.center()
             window.makeKeyAndOrderFront(nil)
         } else {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Confirm OpenCode send"
-            window.contentViewController = hosting
-            window.minSize = NSSize(width: 720, height: 580)
-            window.isReleasedWhenClosed = false
+            let window = AppWindowFactory.makeReviewWindow(model: model, request: request)
             window.delegate = self
             window.center()
             reviewWindow = window

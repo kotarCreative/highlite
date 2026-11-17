@@ -55,6 +55,9 @@ the file, and --bind / --data-dir override both. Supported names:
   HIGHLITE_RELAY_PIPELINES_FILE          default <data-dir>/pipelines.json
   HIGHLITE_RELAY_PIPELINE_CONCURRENCY    default 2
   HIGHLITE_RELAY_TRANSCRIBER_COMMAND     ASR command; audio path is appended
+  HIGHLITE_RELAY_PARAKEET_BIN            native Parakeet CLI; requires the next two
+  HIGHLITE_RELAY_PARAKEET_MODEL          native Parakeet GGUF model
+  HIGHLITE_RELAY_FFMPEG                  explicit ffmpeg decoder for native Parakeet
   HIGHLITE_RELAY_LANGUAGE                ASR language hint
   HIGHLITE_RELAY_MAX_KEYFRAMES           compiler keyframe cap (default: compiler default)
   HIGHLITE_RELAY_MIN_GAP_MS              minimum keyframe gap
@@ -74,6 +77,10 @@ the file, and --bind / --data-dir override both. Supported names:
 
 HIGHLITE_RELAY_ENV_FILE can supply a default env-file path.
 HIGHLITE_ASR_COMMAND is accepted as a fallback for the transcriber command.
+An explicit transcriber command takes precedence over native Parakeet settings.
+The three native Parakeet keys are used together. An incomplete set still starts
+the relay, but narration captures warn with the missing key names.
+Quote env-file values that contain spaces; the installer must write quoted paths.
 
 Endpoints:
   POST /v1/sessions              ingest an application/zip capture

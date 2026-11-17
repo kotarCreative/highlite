@@ -115,9 +115,15 @@ and generated drafts.
 
 ## UI
 
-The dashboard opens on launch. Closing it keeps the app in the menu bar without a
-Dock icon. Opening the app again (including `open dist/Highlite.app`) restores and
-focuses the dashboard, even if it was closed or minimized.
+The dashboard opens on launch at roughly 1040×760 content size. Closing it keeps the app
+in the menu bar without a Dock icon. Opening the app again (including
+`open dist/Highlite.app`) restores and focuses the dashboard at a usable size, even if it
+was closed or minimized.
+
+The sidebar and detail enforce one shared minimum: 180pt sidebar + 780pt detail + the
+split-view divider. The window's minimum content size includes that divider so resizing
+cannot clip either column. The **Sessions** list and detail panes fill the remaining
+height and scroll independently.
 
 The app installs the standard Edit menu so **Cmd+V**, **Cmd+C**, **Cmd+X**, and
 **Cmd+A** reach the focused text field. API-key fields accept paste while remaining
@@ -135,7 +141,15 @@ The dashboard covers:
   image opt-in, and extra fields JSON.
 - **OpenCode recipe** — required directory, discovery version and eligible sessions,
   prompt, auto-draft, and enable/save.
-- **Settings** — relay and local path settings.
+- **Settings** — relay and local path settings, plus narration setup status,
+  download progress, retry, and installed-license notices.
+
+The narration card shows waiting/checking, downloading or verifying with byte
+progress, **Ready** with the installed model path, **Preserved relay.env
+configuration** when `relay.env` already defines a transcriber command or
+Parakeet paths outside the app's directory, and a failed state with a bounded
+retry. The preserved state is not a readiness claim: the app skips and does not
+verify those settings, so narration depends on the named commands and files.
 
 Session detail exposes Jira draft/edit/publish and OpenCode suggestion/override/confirm.
 The interface explains that OpenCode routing is metadata-only and never auto-submits.
@@ -186,9 +200,14 @@ apps/macos/
 
 After launching from `dist/Highlite.app`:
 
-1. The dashboard opens, the relay starts, and the status indicator becomes reachable.
-   Close the dashboard and run `open dist/Highlite.app` again; it should reopen without
-   starting another app or relay. Minimize it and repeat; it should restore and focus.
+1. The dashboard opens at roughly 1040×760 content size, centered, with a non-empty
+   content area (not a title-bar-only window), and the relay starts with a reachable
+   status indicator. Select **Sessions** with at least one capture and confirm the
+   session list and detail panes fill the window height and scroll independently. Shrink
+   the window to its minimum and confirm the sidebar and detail still fit without
+   horizontal clipping. Close the dashboard and run `open dist/Highlite.app` again; it
+   should reopen at a usable size without starting another app or relay. Minimize it and
+   repeat; it should restore and focus.
 2. Tokens exist only in Keychain, `relay.env` is `0600`, and the config directory is
    `0700`.
 3. Provider and Jira setup can be saved and reports **Saved, not verified** where
@@ -200,7 +219,9 @@ After launching from `dist/Highlite.app`:
    sessions.
 5. Capture a session and let the recipe create a pending suggestion.
 6. Confirm that an unrelated OpenCode session in another window does not become the
-   target and nothing is sent before confirmation.
+   target and nothing is sent before confirmation. Confirm the confirmation window opens
+   at roughly 820×700, and that it keeps a usable size when a later suggestion reuses the
+   same window.
 7. Confirm the chosen session receives exactly the previewed prompt.
 8. Defer a suggestion, restart the app, and confirm the pending run persists.
 9. Inspect `/v1/activity` and confirm no prompt text, drafts, capture summaries, or

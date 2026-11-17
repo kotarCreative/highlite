@@ -67,11 +67,28 @@ struct SettingsView: View {
                     .disabled(applying || model.isBusy("settings"))
                 }
 
+                Card("Narration transcription") {
+                    transcriptionStatus
+                    Text("On first launch Highlite downloads the Parakeet engine, the English 110M Q8 model, and a pinned LGPL audio decoder once. Checksums are verified before use. The app stays usable while this runs.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("If relay.env already defines a transcriber command or Parakeet paths outside this app, those values are preserved and automatic setup is skipped; Highlite does not verify them. An external relay is never restarted; restart it yourself to load the new settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    DisclosureGroup("Model and license notices") {
+                        Text(TranscriptionLicenseNotice.text)
+                            .font(.system(.caption2, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                    .font(.caption)
+                }
+
                 Card("Private paths") {
                     pathRow("Application support", value: paths.supportDirectory.path)
                     pathRow("Environment file (0600)", value: paths.envFile.path)
                     pathRow("Relay config directory (0700)", value: paths.configDirectory.path)
                     pathRow("Relay data directory", value: paths.dataDirectory.path)
+                    pathRow("Narration models", value: paths.transcriptionDirectory.path)
                     Text("Provider and Jira credentials are the relay's existing private files in the config directory. This app does not read them and does not claim Keychain protection for them.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -114,6 +131,74 @@ struct SettingsView: View {
                 loaded = true
             }
         }
+    }
+
+    @ViewBuilder
+    private var transcriptionStatus: some View {
+        switch model.transcription {
+        case .idle:
+            LabeledContent("Status", value: "Waiting to start")
+        case .checking:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Checking narration setup…")
+                    .foregroundStyle(.secondary)
+            }
+        case .custom(let reason):
+            LabeledContent("Status", value: "Preserved relay.env configuration")
+            Text(reason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Highlite did not change or verify these settings. Narration only works if the named command and paths exist and are valid; otherwise the relay reports a capture warning or an upload error.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        case .downloading(let stage, let completed, let total):
+            Text(stage)
+            if let fraction = model.transcription.fraction {
+                ProgressView(value: fraction)
+                Text("\(bytes(completed)) of \(bytes(total))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        case .verifying(let stage):
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(stage)
+                    .foregroundStyle(.secondary)
+            }
+        case .ready(let installation):
+            LabeledContent("Status", value: "Ready")
+            Text(installation.model.lastPathComponent)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+            HStack {
+                Button("Reveal models") {
+                    NSWorkspace.shared.activateFileViewerSelecting([
+                        installation.model.deletingLastPathComponent(),
+                    ])
+                }
+                .buttonStyle(.borderless)
+                Spacer()
+            }
+        case .failed(let message):
+            LabeledContent("Status", value: "Setup failed")
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .textSelection(.enabled)
+            HStack {
+                Button("Retry narration setup") {
+                    model.retryTranscriptionProvisioning()
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private func bytes(_ value: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 
     @ViewBuilder

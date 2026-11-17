@@ -30,8 +30,9 @@ use axum::{Json, Router};
 use bytes::Bytes;
 use highlite_compiler::bundle::resolve_capture_path;
 use highlite_compiler::{
-    BundleOptions, CommandTranscriber, CompileInput, CompileOptions, HighliteManifest, Transcriber,
-    TranscriptionRequest, compile_capture, shift_transcript, write_bundle,
+    BundleOptions, CommandTranscriber, CompileInput, CompileOptions, HighliteManifest,
+    ParakeetCliTranscriber, Transcriber, TranscriptionRequest, compile_capture, shift_transcript,
+    write_bundle,
 };
 use hmac::{Hmac, KeyInit, Mac};
 use reqwest::redirect::Policy;
@@ -82,6 +83,7 @@ pub struct RelayConfig {
     pub max_files: usize,
     pub concurrency: usize,
     pub transcriber_command: Option<String>,
+    pub parakeet: Option<NativeParakeetConfig>,
     pub language: Option<String>,
     pub keep_uploads: bool,
     pub ui: bool,
@@ -99,6 +101,35 @@ pub struct WebhookConfig {
     pub secret: String,
     pub timeout_ms: u64,
     pub max_attempts: u32,
+}
+
+/// App-managed Parakeet install: an explicit binary, GGUF, and ffmpeg decoder.
+///
+/// The relay runs these paths directly through the linked compiler instead of
+/// building a command string, so spaces in any path are safe. Each path is
+/// optional so a partially written install cannot prevent relay startup; an
+/// incomplete install records a warning on narration captures instead.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NativeParakeetConfig {
+    pub binary: Option<PathBuf>,
+    pub model: Option<PathBuf>,
+    pub ffmpeg: Option<PathBuf>,
+}
+
+impl NativeParakeetConfig {
+    fn missing_keys(&self) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if self.binary.is_none() {
+            missing.push("HIGHLITE_RELAY_PARAKEET_BIN");
+        }
+        if self.model.is_none() {
+            missing.push("HIGHLITE_RELAY_PARAKEET_MODEL");
+        }
+        if self.ffmpeg.is_none() {
+            missing.push("HIGHLITE_RELAY_FFMPEG");
+        }
+        missing
+    }
 }
 
 impl RelayConfig {
@@ -1576,26 +1607,17 @@ fn compile_upload(
     {
         let audio_path = resolve_capture_path(capture_dir, audio)
             .map_err(|error| UploadError::unprocessable(error.to_string()))?;
-        match state.config.transcriber_command.as_deref() {
-            Some(command) => {
-                let transcriber = CommandTranscriber::new(command)
-                    .map_err(|error| UploadError::unprocessable(error.to_string()))?;
-                let segments = transcriber
-                    .transcribe(&TranscriptionRequest {
-                        audio_path: &audio_path,
-                        language: state.config.language.as_deref(),
-                    })
-                    .map_err(|error| UploadError::unprocessable(error.to_string()))?;
+        match transcribe_audio(&state.config, &audio_path)? {
+            TranscriptionOutcome::Transcript(segments) => {
                 manifest.transcript = shift_transcript(
                     segments,
                     manifest.audio_offset_ms.unwrap_or(0),
                     manifest.duration_ms,
                 );
             }
-            None => push_unique_warning(
-                &mut manifest.capture_warnings,
-                "Narration was not transcribed by the relay.",
-            ),
+            TranscriptionOutcome::Warning(warning) => {
+                push_unique_warning(&mut manifest.capture_warnings, &warning);
+            }
         }
     }
 
@@ -1612,6 +1634,72 @@ fn compile_upload(
         UploadError::internal(format!("could not package the compiled bundle: {error}"))
     })?;
     Ok(written.summary)
+}
+
+enum TranscriptionOutcome {
+    Transcript(Vec<highlite_compiler::TranscriptSegment>),
+    Warning(String),
+}
+
+fn transcribe_audio(
+    config: &RelayConfig,
+    audio_path: &Path,
+) -> Result<TranscriptionOutcome, UploadError> {
+    // An explicit command is the operator's choice and keeps its existing
+    // failure behavior: a broken command fails the upload with a clear error.
+    if let Some(command) = config.transcriber_command.as_deref() {
+        let transcriber = CommandTranscriber::new(command)
+            .map_err(|error| UploadError::unprocessable(error.to_string()))?;
+        let segments = transcriber
+            .transcribe(&TranscriptionRequest {
+                audio_path,
+                language: config.language.as_deref(),
+            })
+            .map_err(|error| UploadError::unprocessable(error.to_string()))?;
+        return Ok(TranscriptionOutcome::Transcript(segments));
+    }
+
+    // App-managed native Parakeet is best-effort: a missing download or a
+    // runtime failure must not lose the capture. Record a warning and continue.
+    if let Some(parakeet) = config.parakeet.as_ref() {
+        let (Some(binary), Some(model), Some(ffmpeg)) =
+            (&parakeet.binary, &parakeet.model, &parakeet.ffmpeg)
+        else {
+            let missing = parakeet.missing_keys();
+            return Ok(TranscriptionOutcome::Warning(format!(
+                "Narration was not transcribed because the built-in Parakeet configuration is \
+                 incomplete; missing {}. The capture and audio were kept.",
+                missing.join(", ")
+            )));
+        };
+
+        let Some(transcriber) = ParakeetCliTranscriber::detect_with_ffmpeg(
+            Some(model),
+            Some(binary),
+            Some(ffmpeg),
+            config.language.as_deref(),
+        ) else {
+            return Ok(TranscriptionOutcome::Warning(
+                "Narration was not transcribed because the built-in Parakeet paths could not be \
+                 resolved. The capture and audio were kept."
+                    .to_owned(),
+            ));
+        };
+        return match transcriber.transcribe(&TranscriptionRequest {
+            audio_path,
+            language: config.language.as_deref(),
+        }) {
+            Ok(segments) => Ok(TranscriptionOutcome::Transcript(segments)),
+            Err(error) => Ok(TranscriptionOutcome::Warning(format!(
+                "Narration was not transcribed because the built-in Parakeet transcriber failed. \
+                 {error} The capture and audio were kept."
+            ))),
+        };
+    }
+
+    Ok(TranscriptionOutcome::Warning(
+        "Narration was not transcribed by the relay.".to_owned(),
+    ))
 }
 
 fn push_unique_warning(warnings: &mut Vec<String>, message: &str) {
@@ -2027,8 +2115,21 @@ fn config_from_values(
         "HIGHLITE_RELAY_PIPELINE_CONCURRENCY",
         2,
     )?;
-    let transcriber_command =
-        lookup("HIGHLITE_RELAY_TRANSCRIBER_COMMAND").or_else(|| lookup("HIGHLITE_ASR_COMMAND"));
+    let transcriber_command = lookup("HIGHLITE_RELAY_TRANSCRIBER_COMMAND")
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| lookup("HIGHLITE_ASR_COMMAND").filter(|value| !value.trim().is_empty()));
+    // An explicit command always wins. Only inspect the native keys when no
+    // command is set, so a stale or partial app-managed install cannot block a
+    // deliberately configured ASR command.
+    let parakeet = if transcriber_command.is_some() {
+        None
+    } else {
+        native_parakeet_config(
+            lookup("HIGHLITE_RELAY_PARAKEET_BIN"),
+            lookup("HIGHLITE_RELAY_PARAKEET_MODEL"),
+            lookup("HIGHLITE_RELAY_FFMPEG"),
+        )
+    };
     let compile = CompileOptions {
         max_keyframes: env_optional_u32(
             lookup("HIGHLITE_RELAY_MAX_KEYFRAMES"),
@@ -2091,6 +2192,7 @@ fn config_from_values(
         max_files: usize::try_from(max_files).unwrap_or(usize::MAX),
         concurrency: usize::try_from(concurrency).unwrap_or(usize::MAX),
         transcriber_command,
+        parakeet,
         language: lookup("HIGHLITE_RELAY_LANGUAGE"),
         keep_uploads,
         ui,
@@ -2141,6 +2243,35 @@ fn split_list(value: Option<String>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Preserve the configured path verbatim so spaces are not lost. Whitespace-only
+/// values count as unset; surrounding spaces are kept because they are valid in
+/// a filesystem path.
+fn env_path(value: Option<String>) -> Option<PathBuf> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+fn native_parakeet_config(
+    binary: Option<String>,
+    model: Option<String>,
+    ffmpeg: Option<String>,
+) -> Option<NativeParakeetConfig> {
+    let config = NativeParakeetConfig {
+        binary: env_path(binary),
+        model: env_path(model),
+        ffmpeg: env_path(ffmpeg),
+    };
+    if config.binary.is_none() && config.model.is_none() && config.ffmpeg.is_none() {
+        None
+    } else {
+        // Keep every configured value, even when the set is incomplete. The
+        // caller warns only when a narration capture actually needs the
+        // backend, so a hand-edited partial install cannot block startup.
+        Some(config)
+    }
 }
 
 fn env_number(value: Option<String>, name: &str, default: u64) -> Result<u64, String> {
@@ -2325,6 +2456,71 @@ mod tests {
         bytes.into_inner()
     }
 
+    pub(super) fn capture_zip_with_audio(session_id: &str, audio: &[u8]) -> Vec<u8> {
+        let mut manifest = minimal_manifest(session_id);
+        manifest.artifacts.audio = Some("audio.wav".to_owned());
+        manifest.audio_offset_ms = Some(250);
+        let mut bytes = Cursor::new(Vec::new());
+        {
+            let mut writer = ZipWriter::new(&mut bytes);
+            writer
+                .start_file(
+                    "manifest.json",
+                    SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+                )
+                .unwrap();
+            writer
+                .write_all(serde_json::to_string(&manifest).unwrap().as_bytes())
+                .unwrap();
+            writer
+                .start_file(
+                    "audio.wav",
+                    SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+                )
+                .unwrap();
+            writer.write_all(audio).unwrap();
+            writer.finish().unwrap();
+        }
+        bytes.into_inner()
+    }
+
+    #[cfg(unix)]
+    fn write_executable(path: &Path, contents: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    async fn upload_capture(app: Router, zip: Vec<u8>) -> Response {
+        let mut upload = request(Method::POST, "/v1/sessions", Body::from(zip));
+        upload.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer ingest-secret"),
+        );
+        upload
+            .headers_mut()
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/zip"));
+        app.oneshot(upload).await.unwrap()
+    }
+
+    fn bundle_manifest(config: &RelayConfig, session_id: &str) -> Value {
+        let bytes = fs::read(
+            config
+                .data_dir
+                .join("bundles")
+                .join(session_id)
+                .join("manifest.json"),
+        )
+        .expect("compiled manifest should exist");
+        serde_json::from_slice(&bytes).expect("compiled manifest should be JSON")
+    }
+
     pub(super) fn test_config(temp: &TempDir) -> RelayConfig {
         RelayConfig {
             bind: "127.0.0.1:0".to_owned(),
@@ -2339,6 +2535,7 @@ mod tests {
             max_files: 100,
             concurrency: 1,
             transcriber_command: None,
+            parakeet: None,
             language: None,
             keep_uploads: false,
             ui: false,
@@ -2618,6 +2815,228 @@ mod tests {
             response.headers().get(header::CONTENT_TYPE).unwrap(),
             "application/zip"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn transcribes_with_native_parakeet_paths_that_contain_spaces() {
+        let temp = TempDir::new().unwrap();
+        let tools = temp.path().join("Highlite Tools With Spaces");
+        write_executable(
+            &tools.join("ffmpeg"),
+            "#!/bin/sh\nfor output; do :; done\nprintf 'RIFF' > \"$output\"\n",
+        );
+        write_executable(
+            &tools.join("parakeet-cli"),
+            "#!/bin/sh\nprintf '%s' '{\"text\":\"Look here.\",\"words\":[{\"w\":\"Look\",\"start\":0.1,\"end\":0.3,\"conf\":0.99},{\"w\":\"here.\",\"start\":0.3,\"end\":0.6,\"conf\":0.98}]}'\n",
+        );
+        let model = tools.join("Parakeet Model.gguf");
+        fs::write(&model, b"fake model").unwrap();
+
+        let mut config = test_config(&temp);
+        config.parakeet = Some(NativeParakeetConfig {
+            binary: Some(tools.join("parakeet-cli")),
+            model: Some(model),
+            ffmpeg: Some(tools.join("ffmpeg")),
+        });
+        let app = build_app(config.clone()).expect("app should build");
+
+        let response = upload_capture(
+            app,
+            capture_zip_with_audio("session-native-parakeet", b"fake audio"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let manifest = bundle_manifest(&config, "session-native-parakeet");
+        assert_eq!(manifest["transcript"][0]["text"], "Look here.");
+        assert_eq!(manifest["transcript"][0]["startMs"], 350);
+        assert_eq!(manifest["transcript"][0]["endMs"], 850);
+        let warnings = manifest["captureWarnings"].as_array().unwrap();
+        assert!(
+            !warnings
+                .iter()
+                .any(|warning| warning.as_str().unwrap_or_default().contains("Parakeet")),
+            "unexpected warning: {warnings:?}"
+        );
+        assert!(
+            config
+                .data_dir
+                .join("bundles/session-native-parakeet/audio.wav")
+                .is_file()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn explicit_transcriber_command_wins_over_native_parakeet() {
+        let temp = TempDir::new().unwrap();
+        let tools = temp.path().join("tools");
+        write_executable(
+            &tools.join("ffmpeg"),
+            "#!/bin/sh\nfor output; do :; done\nprintf 'RIFF' > \"$output\"\n",
+        );
+        write_executable(
+            &tools.join("parakeet-cli"),
+            "#!/bin/sh\nprintf '%s' '{\"text\":\"Native text.\",\"words\":[{\"w\":\"Native\",\"start\":0.1,\"end\":0.3,\"conf\":0.99},{\"w\":\"text.\",\"start\":0.3,\"end\":0.6,\"conf\":0.98}]}'\n",
+        );
+        write_executable(
+            &tools.join("command-asr"),
+            "#!/bin/sh\nprintf '%s' '{\"segments\":[{\"startMs\":0,\"endMs\":900,\"text\":\"Command text\"}]}'\n",
+        );
+        let model = tools.join("parakeet.gguf");
+        fs::write(&model, b"fake model").unwrap();
+
+        let mut config = test_config(&temp);
+        config.transcriber_command = Some(tools.join("command-asr").display().to_string());
+        config.parakeet = Some(NativeParakeetConfig {
+            binary: Some(tools.join("parakeet-cli")),
+            model: Some(model),
+            ffmpeg: Some(tools.join("ffmpeg")),
+        });
+        let app = build_app(config.clone()).expect("app should build");
+
+        let response = upload_capture(
+            app,
+            capture_zip_with_audio("session-command-precedence", b"fake audio"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let manifest = bundle_manifest(&config, "session-command-precedence");
+        assert_eq!(manifest["transcript"][0]["text"], "Command text");
+        assert_eq!(manifest["transcript"][0]["startMs"], 250);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_parakeet_missing_model_warns_without_failing_the_upload() {
+        let temp = TempDir::new().unwrap();
+        let tools = temp.path().join("tools");
+        let mut config = test_config(&temp);
+        config.parakeet = Some(NativeParakeetConfig {
+            binary: Some(tools.join("missing-parakeet-cli")),
+            model: Some(tools.join("missing-model.gguf")),
+            ffmpeg: Some(tools.join("missing-ffmpeg")),
+        });
+        let app = build_app(config.clone()).expect("app should build");
+
+        let response = upload_capture(
+            app,
+            capture_zip_with_audio("session-native-missing", b"fake audio"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let manifest = bundle_manifest(&config, "session-native-missing");
+        assert!(manifest["transcript"].as_array().unwrap().is_empty());
+        let warnings = manifest["captureWarnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|warning| warning.as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(warnings.contains("built-in Parakeet"), "{warnings}");
+        assert!(
+            warnings.contains("Parakeet model was not found"),
+            "{warnings}"
+        );
+        assert!(
+            warnings.contains("capture and audio were kept"),
+            "{warnings}"
+        );
+        assert!(
+            config
+                .data_dir
+                .join("bundles/session-native-missing/audio.wav")
+                .is_file()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_parakeet_runtime_failure_warns_without_failing_the_upload() {
+        let temp = TempDir::new().unwrap();
+        let tools = temp.path().join("tools");
+        write_executable(
+            &tools.join("ffmpeg"),
+            "#!/bin/sh\nfor output; do :; done\nprintf 'RIFF' > \"$output\"\n",
+        );
+        write_executable(
+            &tools.join("parakeet-cli"),
+            "#!/bin/sh\necho 'model runner exploded' >&2\nexit 7\n",
+        );
+        let model = tools.join("parakeet.gguf");
+        fs::write(&model, b"fake model").unwrap();
+
+        let mut config = test_config(&temp);
+        config.parakeet = Some(NativeParakeetConfig {
+            binary: Some(tools.join("parakeet-cli")),
+            model: Some(model),
+            ffmpeg: Some(tools.join("ffmpeg")),
+        });
+        let app = build_app(config.clone()).expect("app should build");
+
+        let response = upload_capture(
+            app,
+            capture_zip_with_audio("session-native-crash", b"fake audio"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let manifest = bundle_manifest(&config, "session-native-crash");
+        assert!(manifest["transcript"].as_array().unwrap().is_empty());
+        let warnings = manifest["captureWarnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|warning| warning.as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(warnings.contains("model runner exploded"), "{warnings}");
+        assert!(
+            warnings.contains("capture and audio were kept"),
+            "{warnings}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn explicit_transcriber_failure_still_fails_the_upload() {
+        let temp = TempDir::new().unwrap();
+        let tools = temp.path().join("tools");
+        write_executable(
+            &tools.join("command-asr"),
+            "#!/bin/sh\necho 'explicit command failed' >&2\nexit 9\n",
+        );
+        write_executable(
+            &tools.join("ffmpeg"),
+            "#!/bin/sh\nfor output; do :; done\nprintf 'RIFF' > \"$output\"\n",
+        );
+        write_executable(
+            &tools.join("parakeet-cli"),
+            "#!/bin/sh\nprintf '%s' '{\"text\":\"Native text.\",\"words\":[{\"w\":\"Native\",\"start\":0.1,\"end\":0.3,\"conf\":0.99},{\"w\":\"text.\",\"start\":0.3,\"end\":0.6,\"conf\":0.98}]}'\n",
+        );
+        let model = tools.join("parakeet.gguf");
+        fs::write(&model, b"fake model").unwrap();
+
+        let mut config = test_config(&temp);
+        config.transcriber_command = Some(tools.join("command-asr").display().to_string());
+        // A working native backend must not mask an explicit command failure.
+        config.parakeet = Some(NativeParakeetConfig {
+            binary: Some(tools.join("parakeet-cli")),
+            model: Some(model),
+            ffmpeg: Some(tools.join("ffmpeg")),
+        });
+        let app = build_app(config.clone()).expect("app should build");
+
+        let response = upload_capture(
+            app,
+            capture_zip_with_audio("session-command-failure", b"fake audio"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
@@ -3010,6 +3429,7 @@ mod tests {
             config.transcriber_command.as_deref(),
             Some("python3 asr.py")
         );
+        assert!(config.parakeet.is_none());
         assert_eq!(config.language.as_deref(), Some("en"));
         let webhook = config.webhook.expect("webhook should be configured");
         assert_eq!(webhook.url, "https://hooks.test/highlite");
@@ -3026,6 +3446,211 @@ mod tests {
         assert!(!config.bundle.annotations);
         assert!(!config.bundle.contact_sheet);
         assert_eq!(config.bundle.contact_sheet_width, 1200);
+    }
+
+    #[test]
+    fn parses_native_parakeet_paths_without_losing_spaces() {
+        let values = HashMap::from([
+            (
+                "HIGHLITE_RELAY_INGEST_TOKEN".to_owned(),
+                "ingest-secret".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_PARAKEET_BIN".to_owned(),
+                "/Applications/Highlite Tools/parakeet-cli".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_PARAKEET_MODEL".to_owned(),
+                "/Users/example/Library/Application Support/Highlite/Models/parakeet model.gguf"
+                    .to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_FFMPEG".to_owned(),
+                "/Applications/Highlite Tools/ffmpeg".to_owned(),
+            ),
+            ("HIGHLITE_RELAY_LANGUAGE".to_owned(), "en".to_owned()),
+        ]);
+
+        let config = config_from_values(values, None, None, None).expect("config should parse");
+        assert!(config.transcriber_command.is_none());
+        assert_eq!(
+            config.parakeet,
+            Some(NativeParakeetConfig {
+                binary: Some(PathBuf::from("/Applications/Highlite Tools/parakeet-cli")),
+                model: Some(PathBuf::from(
+                    "/Users/example/Library/Application Support/Highlite/Models/parakeet model.gguf"
+                )),
+                ffmpeg: Some(PathBuf::from("/Applications/Highlite Tools/ffmpeg")),
+            })
+        );
+        assert_eq!(config.language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn env_file_keeps_spaces_in_native_parakeet_paths() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("relay.env");
+        fs::write(
+            &path,
+            "HIGHLITE_RELAY_INGEST_TOKEN=install-token\n\
+             HIGHLITE_RELAY_PARAKEET_BIN=\"/Applications/Highlite Tools/parakeet-cli\"\n\
+             HIGHLITE_RELAY_PARAKEET_MODEL=\"/Users/example/Library/Application Support/Highlite/Models/parakeet model.gguf\"\n\
+             HIGHLITE_RELAY_FFMPEG=\"/Applications/Highlite Tools/ffmpeg\"\n",
+        )
+        .unwrap();
+
+        let values = load_env_files(&[path]).expect("env file should load");
+        let config =
+            config_from_values(values, None, None, None).expect("config should parse the env file");
+
+        let parakeet = config
+            .parakeet
+            .expect("native Parakeet should be configured");
+        assert_eq!(
+            parakeet.binary,
+            Some(PathBuf::from("/Applications/Highlite Tools/parakeet-cli"))
+        );
+        assert_eq!(
+            parakeet.model,
+            Some(PathBuf::from(
+                "/Users/example/Library/Application Support/Highlite/Models/parakeet model.gguf"
+            ))
+        );
+        assert_eq!(
+            parakeet.ffmpeg,
+            Some(PathBuf::from("/Applications/Highlite Tools/ffmpeg"))
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_native_parakeet_settings_start_and_warn_on_narration() {
+        let values = HashMap::from([
+            (
+                "HIGHLITE_RELAY_INGEST_TOKEN".to_owned(),
+                "ingest-secret".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_ALLOWED_HOSTS".to_owned(),
+                "relay.test".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_ALLOWED_ORIGINS".to_owned(),
+                "https://app.test".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_PARAKEET_BIN".to_owned(),
+                "/opt/parakeet-cli".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_PARAKEET_MODEL".to_owned(),
+                "/opt/parakeet.gguf".to_owned(),
+            ),
+        ]);
+
+        let temp = TempDir::new().unwrap();
+        let config = config_from_values(values, None, Some(temp.path().to_path_buf()), None)
+            .expect("a partial native install must not block startup");
+        assert_eq!(
+            config.parakeet,
+            Some(NativeParakeetConfig {
+                binary: Some(PathBuf::from("/opt/parakeet-cli")),
+                model: Some(PathBuf::from("/opt/parakeet.gguf")),
+                ffmpeg: None,
+            })
+        );
+
+        let app = build_app(config.clone()).expect("the relay should still start");
+        let response = upload_capture(
+            app,
+            capture_zip_with_audio("session-partial-parakeet", b"fake audio"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let manifest = bundle_manifest(&config, "session-partial-parakeet");
+        assert!(manifest["transcript"].as_array().unwrap().is_empty());
+        let warnings = manifest["captureWarnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|warning| warning.as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(warnings.contains("built-in Parakeet"), "{warnings}");
+        assert!(warnings.contains("incomplete"), "{warnings}");
+        assert!(warnings.contains("HIGHLITE_RELAY_FFMPEG"), "{warnings}");
+        assert!(
+            config
+                .data_dir
+                .join("bundles/session-partial-parakeet/audio.wav")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn explicit_transcriber_command_ignores_partial_native_settings() {
+        let values = HashMap::from([
+            (
+                "HIGHLITE_RELAY_INGEST_TOKEN".to_owned(),
+                "ingest-secret".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_TRANSCRIBER_COMMAND".to_owned(),
+                "python3 asr.py".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_PARAKEET_BIN".to_owned(),
+                "/opt/parakeet-cli".to_owned(),
+            ),
+        ]);
+
+        let config = config_from_values(values, None, None, None)
+            .expect("the explicit command should take precedence");
+        assert_eq!(
+            config.transcriber_command.as_deref(),
+            Some("python3 asr.py")
+        );
+        assert!(config.parakeet.is_none());
+    }
+
+    #[test]
+    fn blank_transcriber_command_counts_as_unset() {
+        let values = HashMap::from([
+            (
+                "HIGHLITE_RELAY_INGEST_TOKEN".to_owned(),
+                "ingest-secret".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_TRANSCRIBER_COMMAND".to_owned(),
+                "   ".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_PARAKEET_BIN".to_owned(),
+                "/opt/parakeet-cli".to_owned(),
+            ),
+            (
+                "HIGHLITE_RELAY_PARAKEET_MODEL".to_owned(),
+                "/opt/parakeet.gguf".to_owned(),
+            ),
+            ("HIGHLITE_RELAY_FFMPEG".to_owned(), "/opt/ffmpeg".to_owned()),
+        ]);
+
+        let config = config_from_values(values, None, None, None)
+            .expect("a blank command must not make the config invalid");
+        assert!(config.transcriber_command.is_none());
+        assert!(config.parakeet.is_some());
+
+        let only_blank = HashMap::from([
+            (
+                "HIGHLITE_RELAY_INGEST_TOKEN".to_owned(),
+                "ingest-secret".to_owned(),
+            ),
+            ("HIGHLITE_ASR_COMMAND".to_owned(), String::new()),
+        ]);
+        let config = config_from_values(only_blank, None, None, None)
+            .expect("a blank ASR command must not be treated as explicit");
+        assert!(config.transcriber_command.is_none());
+        assert!(config.parakeet.is_none());
     }
 
     #[test]

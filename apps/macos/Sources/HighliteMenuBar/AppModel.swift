@@ -64,13 +64,18 @@ final class AppModel: ObservableObject {
     @Published var activityError: String?
     @Published var busy: Set<String> = []
     @Published var lastPollAt: Date?
+    @Published var transcription: TranscriptionProvisioningState = .idle
 
     private let supervisor: RelaySupervisor
     private let settingsStore: AppSettingsStore
     private let paths: RelayPaths
     private let defaults: UserDefaults
+    private let transcriptionProvisioner: TranscriptionProvisioner?
+    private let transcriptionSetupError: String?
     private var client: RelayClient?
     private var pollTask: Task<Void, Never>?
+    private var transcriptionTask: Task<Void, Never>?
+    private var transcriptionGeneration: UInt64 = 0
     private var cancellables: Set<AnyCancellable> = []
     private var notifiedKeys: Set<String> = []
     private var deferredKeys: Set<String> = []
@@ -89,6 +94,17 @@ final class AppModel: ObservableObject {
         self.settingsStore = settingsStore
         self.supervisor = supervisor ?? RelaySupervisor(paths: paths)
         self.defaults = defaults
+        do {
+            let artifacts = try TranscriptionArtifacts.current()
+            self.transcriptionProvisioner = TranscriptionProvisioner(
+                paths: paths,
+                artifacts: artifacts
+            )
+            self.transcriptionSetupError = nil
+        } catch {
+            self.transcriptionProvisioner = nil
+            self.transcriptionSetupError = error.localizedDescription
+        }
         let loaded = settingsStore.load(environmentFile: paths.envFile)
         self.settings = loaded
         self.relay = RelaySnapshot.stopped(baseURL: loaded.baseURL)
@@ -141,6 +157,7 @@ final class AppModel: ObservableObject {
             .store(in: &cancellables)
 
         await startRelay()
+        startTranscriptionProvisioning()
         startPolling()
     }
 
@@ -149,9 +166,205 @@ final class AppModel: ObservableObject {
         relayIntentGeneration &+= 1
         pollTask?.cancel()
         pollTask = nil
+        transcriptionGeneration &+= 1
+        if let task = transcriptionTask {
+            task.cancel()
+            await task.value
+        }
+        transcriptionTask = nil
         await supervisor.stop()
         client = nil
         relay = supervisor.snapshot
+    }
+
+    // MARK: - Narration provisioning
+
+    func retryTranscriptionProvisioning() {
+        guard transcriptionTask == nil, !shuttingDown else { return }
+        startTranscriptionProvisioning()
+    }
+
+    private func startTranscriptionProvisioning() {
+        guard transcriptionTask == nil, !shuttingDown else { return }
+        if let transcriptionSetupError {
+            transcription = .failed(transcriptionSetupError)
+            return
+        }
+        guard let transcriptionProvisioner else {
+            transcription = .failed("Narration setup is unavailable on this Mac.")
+            return
+        }
+        transcriptionGeneration &+= 1
+        let generation = transcriptionGeneration
+        transcription = .checking
+        transcriptionTask = Task { [weak self] in
+            guard let self else { return }
+            await self.performTranscriptionProvisioning(
+                transcriptionProvisioner,
+                generation: generation
+            )
+        }
+    }
+
+    private func performTranscriptionProvisioning(
+        _ provisioner: TranscriptionProvisioner,
+        generation: UInt64
+    ) async {
+        defer {
+            if generation == transcriptionGeneration {
+                transcriptionTask = nil
+            }
+        }
+        guard !Task.isCancelled, !shuttingDown else { return }
+
+        let initial = await provisioner.initialState()
+        guard !Task.isCancelled, !shuttingDown else { return }
+        if case .custom(let reason) = initial {
+            setTranscriptionIfCurrent(.custom(reason), generation: generation)
+            return
+        }
+        if case .ready(let installation) = initial {
+            do {
+                let configuration = try applyTranscriptionConfiguration(installation)
+                setTranscriptionIfCurrent(.ready(installation), generation: generation)
+                if configuration.wrote {
+                    await restartOwnedRelayForTranscription(
+                        preservedNotice: configuration.customDescription
+                    )
+                } else if let description = configuration.customDescription {
+                    notice = description
+                }
+            } catch let error as TranscriptionProvisioningError {
+                if case .customConfiguration(let reason) = error {
+                    setTranscriptionIfCurrent(.custom(reason), generation: generation)
+                } else {
+                    setTranscriptionIfCurrent(.failed(error.localizedDescription), generation: generation)
+                }
+            } catch {
+                setTranscriptionIfCurrent(.failed(error.localizedDescription), generation: generation)
+            }
+            return
+        }
+
+        do {
+            let installation = try await provisioner.provision { state in
+                Task { @MainActor [weak self] in
+                    self?.setTranscriptionProgress(state, generation: generation)
+                }
+            }
+            guard !Task.isCancelled, !shuttingDown else { return }
+            let configuration = try applyTranscriptionConfiguration(installation)
+            setTranscriptionIfCurrent(.ready(installation), generation: generation)
+            await restartOwnedRelayForTranscription(
+                preservedNotice: configuration.customDescription
+            )
+        } catch is CancellationError {
+            if !shuttingDown {
+                setTranscriptionIfCurrent(.idle, generation: generation)
+            }
+        } catch let error as TranscriptionProvisioningError {
+            if case .customConfiguration(let reason) = error {
+                setTranscriptionIfCurrent(.custom(reason), generation: generation)
+            } else {
+                setTranscriptionIfCurrent(.failed(error.localizedDescription), generation: generation)
+            }
+        } catch {
+            setTranscriptionIfCurrent(.failed(error.localizedDescription), generation: generation)
+        }
+    }
+
+    private func setTranscriptionIfCurrent(
+        _ state: TranscriptionProvisioningState,
+        generation: UInt64
+    ) {
+        guard !shuttingDown, generation == transcriptionGeneration else { return }
+        transcription = state
+    }
+
+    private func setTranscriptionProgress(
+        _ state: TranscriptionProvisioningState,
+        generation: UInt64
+    ) {
+        guard !shuttingDown, generation == transcriptionGeneration else { return }
+        switch transcription {
+        case .ready, .failed, .custom:
+            return
+        default:
+            transcription = state
+        }
+    }
+
+    private func applyTranscriptionConfiguration(
+        _ installation: TranscriptionInstallation
+    ) throws -> TranscriptionConfigurationOutcome {
+        let outcome = try RelayEnvironment.configureTranscription(
+            paths: paths,
+            parakeetBin: installation.parakeetBinary.path,
+            parakeetModel: installation.model.path,
+            ffmpeg: installation.ffmpeg.path
+        )
+        if outcome.isCustom {
+            throw TranscriptionProvisioningError.customConfiguration(
+                outcome.customDescription ?? "Using an existing transcriber configuration."
+            )
+        }
+        return outcome
+    }
+
+    private func restartOwnedRelayForTranscription(preservedNotice: String? = nil) async {
+        guard !shuttingDown, !Task.isCancelled else { return }
+        let snapshot = supervisor.snapshot
+        guard snapshot.isRunning else {
+            if let preservedNotice {
+                notice = preservedNotice
+            }
+            return
+        }
+        guard snapshot.owned else {
+            notice = narrationNotice(
+                preservedNotice,
+                "Narration is ready. Restart the external relay to load the new relay.env settings."
+            )
+            return
+        }
+        guard !isBusy("relay"), !isBusy("settings") else {
+            notice = narrationNotice(
+                preservedNotice,
+                "Narration is ready. Restart the relay to apply it."
+            )
+            return
+        }
+
+        busy.insert("relay")
+        defer { busy.remove("relay") }
+        relayIntentGeneration &+= 1
+        let intent = relayIntentGeneration
+        do {
+            let connection = try await supervisor.restart(settings: settings)
+            // A concurrent settings apply, stop, or shutdown owns the client
+            // now; never overwrite the newer connection.
+            guard !shuttingDown, intent == relayIntentGeneration else { return }
+            let newClient = RelayClient()
+            try await newClient.configure(
+                baseURL: connection.baseURL,
+                readToken: connection.tokens.readToken
+            )
+            client = newClient
+            errorMessage = nil
+            await refreshAll()
+            notice = narrationNotice(preservedNotice, "Narration is ready.")
+        } catch {
+            guard !shuttingDown, intent == relayIntentGeneration else { return }
+            client = nil
+            errorMessage = "Narration is ready, but the relay could not be restarted: \(error.localizedDescription)"
+        }
+    }
+
+    /// Keep a preserved-configuration notice visible when relay readiness text
+    /// would otherwise replace it.
+    private func narrationNotice(_ preservedNotice: String?, _ message: String) -> String {
+        guard let preservedNotice else { return message }
+        return "\(preservedNotice) \(message)"
     }
 
     func startRelay() async {

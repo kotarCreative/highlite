@@ -435,29 +435,40 @@ server side; the browser does not need it.
   redirects; non-loopback endpoints must use HTTPS.
 - Uploaded archives are deleted after extraction unless `HIGHLITE_RELAY_KEEP_UPLOADS=true`.
 
-The relay does not transcribe narration by default. Set `HIGHLITE_RELAY_TRANSCRIBER_COMMAND` (or
-`HIGHLITE_ASR_COMMAND`) to run an ASR command that prints transcript JSON on stdout, for
-example the same command accepted by `highlite-compiler bundle --transcribe command`.
+The relay does not transcribe narration by default. An explicit
+`HIGHLITE_RELAY_TRANSCRIBER_COMMAND` (or `HIGHLITE_ASR_COMMAND`) always wins: it runs an ASR
+command that prints transcript JSON on stdout, for example the same command accepted by
+`highlite-compiler bundle --transcribe command`. A broken explicit command fails the upload,
+as before. A blank or whitespace-only value counts as unset, so an empty key never disables
+the native backend below.
 
-To reuse the compiler's local Parakeet backend instead of writing an ASR wrapper:
+The macOS app can instead manage native Parakeet through the linked compiler library:
 
 ```dotenv
-HIGHLITE_RELAY_TRANSCRIBER_COMMAND=/absolute/path/highlite-compiler transcribe --transcribe parakeet --parakeet /absolute/path/parakeet-cli --parakeet-model /absolute/path/model.gguf
+HIGHLITE_RELAY_PARAKEET_BIN="/Applications/Highlite Tools/parakeet-cli"
+HIGHLITE_RELAY_PARAKEET_MODEL="/Users/you/Library/Application Support/Highlite/Models/parakeet.gguf"
+HIGHLITE_RELAY_FFMPEG="/Applications/Highlite Tools/ffmpeg"
 ```
 
-Build the compiler with `cargo build --release -p highlite-compiler`, and ensure
-`ffmpeg` is on the relay's `PATH` (or set `HIGHLITE_FFMPEG` in its process
-environment). The command is split on whitespace, not evaluated by a shell:
-use paths without spaces, or a wrapper script in a path without spaces that
-quotes its internal paths. The relay appends the audio path as a single argument
-and applies `audioOffsetMs` to the returned timings. Restart the relay after
-changing its env file. Existing sessions are not automatically reprocessed.
+Set all three keys together. If the set is incomplete, the relay still starts and keeps the
+hand-edited values; each narration capture records a warning naming the missing keys instead
+of silently skipping transcription. Env-file values are parsed with `dotenvy`, so quote any
+value that contains spaces (the installer must do this). Values are passed directly to the
+compiler, not a shell command, so quoted paths with spaces are safe. The relay needs no
+`highlite-compiler` sidecar and does not depend on `ffmpeg` being on its `PATH` when
+`HIGHLITE_RELAY_FFMPEG` is set. `HIGHLITE_RELAY_LANGUAGE` is used as the language hint.
+
+Native Parakeet is best-effort. If the app-managed binary, model, or decoder is missing, or
+transcription fails at runtime, the upload still succeeds: the capture and audio are kept and
+`captureWarnings` records a clear warning instead of losing the session. Explicit commands
+keep their existing fail-the-upload behavior. The relay appends the audio path as a single
+argument for commands and applies `audioOffsetMs` to returned timings on either path. Restart
+the relay after changing its env file. Existing sessions are not automatically reprocessed.
 
 For the macOS app, edit `~/Library/Application Support/Highlite/relay.env`;
-the app preserves this setting when saving its own settings. The current app
-bundle does not install the transcription engine, model, or compiler adapter.
-Without it, the bundle keeps the audio and records a warning that narration was not
-transcribed.
+the app preserves this setting when saving its own settings. The app installer writes the
+three native Parakeet keys above after it downloads the engine, model, and ffmpeg. Without
+them, the bundle keeps the audio and records a warning that narration was not transcribed.
 
 ## Storage layout
 

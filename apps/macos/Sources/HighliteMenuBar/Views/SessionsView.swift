@@ -45,20 +45,28 @@ struct SessionsView: View {
                         SessionRow(session: session)
                             .tag(session.sessionId)
                     }
-                    .frame(minWidth: 250, idealWidth: 290, maxWidth: 380)
+                    .frame(
+                        minWidth: 250,
+                        idealWidth: 290,
+                        maxWidth: 380,
+                        maxHeight: .infinity
+                    )
 
                     if let selected = model.selectedSession {
                         SessionDetailView(model: model, session: selected)
+                            .frame(minWidth: 480, maxHeight: .infinity)
                     } else {
                         EmptyHint(
                             title: "Select a session",
                             detail: "Open a capture to review Jira drafts and OpenCode suggestions."
                         )
-                        .frame(minWidth: 480)
+                        .frame(minWidth: 480, maxHeight: .infinity)
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             if model.sessions.isEmpty {
                 await model.refreshSessions()
