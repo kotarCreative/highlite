@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Highlite
+GenericName=Capture Relay
+Comment=Local capture relay and session dashboard
+Exec=highlite-desktop
+Icon=com.highlite.Highlite
+Terminal=false
+Categories=Development;
+StartupNotify=true
+StartupWMClass=Highlite-desktop
+Keywords=Highlite;capture;sessions;relay;
