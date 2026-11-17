@@ -122,6 +122,14 @@ enum DashboardStyle {
     /// shorter confirmation. Longer localized labels can still grow.
     static let copyButtonMinimumWidth: CGFloat = 168
     static let emptyStateMinimumHeight: CGFloat = 120
+
+    /// Opacity for the yellow marker behind page titles.
+    ///
+    /// The marker is decorative, so it must stay subordinate to the title in
+    /// both appearances. Dark ink becomes light ink under Dark Aqua; at the
+    /// previous 0.6 opacity the marker washed out that text. This value keeps
+    /// a visible highlighter stroke while preserving contrast on the canvas.
+    static let titleMarkerOpacity: Double = 0.32
 }
 
 private extension NSColor {

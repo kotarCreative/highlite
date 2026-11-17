@@ -71,6 +71,9 @@ struct DashboardView: View {
             .background(DashboardTheme.canvas)
         }
         .navigationTitle("Highlite")
+        // The sidebar is a fixed part of the dashboard; keep its column visible
+        // instead of offering the default toolbar hide/show control.
+        .toolbar(removing: .sidebarToggle)
         .tint(DashboardTheme.primary)
     }
 }

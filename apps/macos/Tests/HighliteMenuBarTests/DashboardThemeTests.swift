@@ -42,6 +42,25 @@ final class DashboardThemeTests: XCTestCase {
         XCTAssertGreaterThan(contrast(0xFFFFFF, 0xB4232D), 6)
     }
 
+    func testTitleMarkerStaysTransparentAndReadableInBothAppearances() {
+        XCTAssertGreaterThan(DashboardStyle.titleMarkerOpacity, 0)
+        XCTAssertLessThan(DashboardStyle.titleMarkerOpacity, 0.6)
+
+        let markerLight = blend(
+            DashboardPalette.highlightYellow.light,
+            over: DashboardPalette.canvas.light,
+            alpha: DashboardStyle.titleMarkerOpacity
+        )
+        let markerDark = blend(
+            DashboardPalette.highlightYellow.dark,
+            over: DashboardPalette.canvas.dark,
+            alpha: DashboardStyle.titleMarkerOpacity
+        )
+
+        XCTAssertGreaterThan(contrast(DashboardPalette.ink.light, markerLight), 4.5)
+        XCTAssertGreaterThan(contrast(DashboardPalette.ink.dark, markerDark), 4.5)
+    }
+
     func testDarkSurfacesKeepTextAndPrimaryReadable() {
         XCTAssertGreaterThan(contrast(0xF7EFE8, 0x1B1519), 12)
         XCTAssertGreaterThan(contrast(0xF7EFE8, 0x241D22), 12)
@@ -56,6 +75,17 @@ final class DashboardThemeTests: XCTestCase {
         let bright = max(luminance(foreground), luminance(background))
         let dark = min(luminance(foreground), luminance(background))
         return (bright + 0.05) / (dark + 0.05)
+    }
+
+    /// Composites translucent marker paint onto an opaque canvas, matching how
+    /// SwiftUI draws the title backplate over `DashboardTheme.canvas`.
+    private func blend(_ foreground: UInt32, over background: UInt32, alpha: Double) -> UInt32 {
+        let channels = [UInt32(16), UInt32(8), UInt32(0)].map { shift -> UInt32 in
+            let front = Double((foreground >> shift) & 0xFF)
+            let back = Double((background >> shift) & 0xFF)
+            return UInt32((front * alpha + back * (1 - alpha)).rounded())
+        }
+        return (channels[0] << 16) | (channels[1] << 8) | channels[2]
     }
 
     private func luminance(_ hex: UInt32) -> Double {

@@ -176,7 +176,7 @@ struct PageHeader<Trailing: View>: View {
                     .foregroundStyle(DashboardTheme.ink)
                     .background(alignment: .bottom) {
                         DashboardTheme.highlightYellow
-                            .opacity(0.6)
+                            .opacity(DashboardStyle.titleMarkerOpacity)
                             .frame(height: 7)
                             .offset(y: 2)
                     }
