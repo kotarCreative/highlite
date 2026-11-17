@@ -89,6 +89,11 @@ Vite's default development origin is `http://localhost:5173`. Add the exact sche
 host, and port of any other browser host that uploads captures. Prefer HTTPS for
 non-local origins.
 
+The Overview **Site embed** card copies a script-tag snippet with the active relay
+ingest endpoint and token. Enter the site's SDK asset path (the default is
+`/assets/highlite.iife.js`) and serve `packages/sdk/dist/highlite.iife.js` from that
+path before pasting the snippet.
+
 The child environment omits `HIGHLITE_RELAY_*` and `HIGHLITE_CONFIG_DIR`, and augments
 `PATH` with common OpenCode locations. Relay logs are bounded and never include tokens
 or request bodies. An owned relay is stopped with **SIGINT**, matching the relay's

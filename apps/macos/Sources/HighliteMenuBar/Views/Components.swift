@@ -86,16 +86,65 @@ struct CopyButton: View {
     let value: String?
     var help: String? = nil
 
+    @State private var feedback: Feedback?
+    @State private var resetTask: Task<Void, Never>?
+
+    private enum Feedback {
+        case copied
+        case failed
+    }
+
     var body: some View {
         Button {
-            guard let value else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(value, forType: .string)
+            copy()
         } label: {
-            Label(title, systemImage: "doc.on.doc")
+            Label(label, systemImage: icon)
         }
         .disabled(value?.isEmpty != false)
-        .help(help ?? title)
+        .help(helpText)
+        .accessibilityHint(Text(helpText))
+        .onDisappear {
+            resetTask?.cancel()
+            feedback = nil
+        }
+    }
+
+    private var label: String {
+        switch feedback {
+        case .copied: return "Copied"
+        case .failed: return "Copy failed"
+        case nil: return title
+        }
+    }
+
+    private var icon: String {
+        switch feedback {
+        case .copied: return "checkmark"
+        case .failed: return "exclamationmark.triangle"
+        case nil: return "doc.on.doc"
+        }
+    }
+
+    private var helpText: String {
+        switch feedback {
+        case .copied: return "\(title) copied to the clipboard."
+        case .failed: return "\(title) could not be copied to the clipboard."
+        case nil: return help ?? title
+        }
+    }
+
+    private func copy() {
+        guard let value, !value.isEmpty else { return }
+        resetTask?.cancel()
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let succeeded = pasteboard.setString(value, forType: .string)
+        feedback = succeeded ? .copied : .failed
+        resetTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            feedback = nil
+        }
     }
 }
 

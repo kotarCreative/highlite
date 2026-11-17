@@ -204,7 +204,8 @@ the system restrictions on copying or cutting their contents.
 
 The dashboard contains:
 
-- **Overview**: relay state, version, endpoint, tokens, setup counts, relay log.
+- **Overview**: relay state, version, endpoint, tokens, site embed script,
+  setup counts, relay log.
 - **Sessions**: capture metadata, Jira draft review/edit/publish, OpenCode run
   review, exact prompt preview, eligible targets.
 - **Activity**: metadata-only `/v1/activity`.

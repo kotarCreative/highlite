@@ -3,6 +3,16 @@ import HighliteMenuBarCore
 
 struct OverviewView: View {
     @ObservedObject var model: AppModel
+    @State private var embedAssetPath = SiteEmbedSnippet.defaultAssetPath
+
+    private var embedScript: String? {
+        guard let ingestToken = model.ingestToken else { return nil }
+        return try? SiteEmbedSnippet(
+            assetPath: embedAssetPath,
+            relayBaseURL: model.relay.baseURL,
+            ingestToken: ingestToken
+        ).html
+    }
 
     var body: some View {
         ScrollView {
@@ -76,6 +86,51 @@ struct OverviewView: View {
                             help: "Used by local integrations. Keep it private."
                         )
                     }
+                }
+
+                Card("Site embed") {
+                    Text(
+                        "Copy a script-tag snippet that sends captures to this relay. Serve the built SDK (packages/sdk/dist/highlite.iife.js) from the site at the asset path below, or change the path to match your site."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    HStack(spacing: 10) {
+                        TextField("SDK asset path", text: $embedAssetPath)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 360)
+                        CopyButton(
+                            title: "Copy embed script",
+                            value: embedScript,
+                            help: "Copies a script-tag snippet for this relay URL and ingest token."
+                        )
+                        Spacer()
+                    }
+
+                    if let embedScript {
+                        DisclosureGroup("Preview script") {
+                            Text(embedScript)
+                                .font(.system(.caption2, design: .monospaced))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .font(.caption)
+                    } else if model.ingestToken == nil {
+                        Text("Start the relay to create the ingest token used by the embed script.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Enter a valid SDK asset path or URL.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(
+                        "Add the site's exact origin in Settings before capturing. The ingest token is visible to the browser and should be scoped to this relay."
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 }
 
                 HStack(alignment: .top, spacing: 14) {
