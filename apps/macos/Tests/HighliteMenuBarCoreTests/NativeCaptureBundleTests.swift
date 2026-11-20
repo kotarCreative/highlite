@@ -49,6 +49,189 @@ final class NativeCaptureBundleTests: XCTestCase {
         )
     }
 
+    func testManifestCarriesEveryBrowserAnnotationKind() throws {
+        let annotations = [
+            NativeCaptureAnnotation(kind: .freehand, points: [
+                NativeCapturePoint(x: 0.10, y: 0.15),
+                NativeCapturePoint(x: 0.20, y: 0.30),
+                NativeCapturePoint(x: 0.30, y: 0.20),
+            ]),
+            NativeCaptureAnnotation(kind: .circle, points: [
+                NativeCapturePoint(x: 0.55, y: 0.20),
+                NativeCapturePoint(x: 0.80, y: 0.55),
+            ]),
+            NativeCaptureAnnotation(kind: .arrow, points: [
+                NativeCapturePoint(x: 0.15, y: 0.70),
+                NativeCapturePoint(x: 0.45, y: 0.85),
+            ]),
+            NativeCaptureAnnotation(kind: .highlight, points: [
+                NativeCapturePoint(x: 0.55, y: 0.65),
+                NativeCapturePoint(x: 0.90, y: 0.85),
+            ]),
+        ]
+        let bundle = try NativeCaptureBundleBuilder.build(
+            pngData: try pngFixture(),
+            note: note,
+            annotations: annotations,
+            createdAt: try createdAt(),
+            sessionId: sessionId
+        )
+
+        let root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: bundle.manifestJSON) as? [String: Any]
+        )
+        let manifestAnnotations = try XCTUnwrap(root["annotations"] as? [[String: Any]])
+        XCTAssertEqual(
+            manifestAnnotations.compactMap { $0["kind"] as? String },
+            ["freehand", "circle", "arrow", "highlight"]
+        )
+        XCTAssertEqual(
+            manifestAnnotations.compactMap { $0["id"] as? String },
+            ["native-freehand", "native-circle", "native-arrow", "native-highlight"]
+        )
+        let freehandPoints = try XCTUnwrap(
+            manifestAnnotations[0]["points"] as? [[String: Any]]
+        )
+        XCTAssertEqual(freehandPoints.count, 3, "Freehand must keep every sampled point")
+
+        let timeline = try XCTUnwrap(root["timeline"] as? [[String: Any]])
+        XCTAssertEqual(timeline.count, 4)
+        XCTAssertEqual(timeline.compactMap { $0["seq"] as? Int }, [0, 1, 2, 3])
+        XCTAssertEqual(
+            timeline.compactMap {
+                ($0["payload"] as? [String: Any])?["annotationKind"] as? String
+            },
+            ["freehand", "circle", "arrow", "highlight"]
+        )
+
+        let keyframes = try XCTUnwrap(root["keyframes"] as? [[String: Any]])
+        let keyframe = try XCTUnwrap(keyframes.first)
+        XCTAssertEqual(
+            keyframe["annotationIds"] as? [String],
+            ["native-freehand", "native-circle", "native-arrow", "native-highlight"]
+        )
+        XCTAssertEqual(
+            keyframe["eventIds"] as? [String],
+            ["native-annotation-1", "native-annotation-2", "native-annotation-3", "native-annotation-4"]
+        )
+        XCTAssertEqual(keyframe["reason"] as? String, "annotation")
+    }
+
+    func testRepeatedAnnotationKindsReceiveDistinctIdentifiers() throws {
+        let bundle = try NativeCaptureBundleBuilder.build(
+            pngData: try pngFixture(),
+            note: note,
+            annotations: [
+                NativeCaptureAnnotation(kind: .circle, points: [
+                    NativeCapturePoint(x: 0.1, y: 0.1),
+                    NativeCapturePoint(x: 0.3, y: 0.3),
+                ]),
+                NativeCaptureAnnotation(kind: .circle, points: [
+                    NativeCapturePoint(x: 0.4, y: 0.4),
+                    NativeCapturePoint(x: 0.6, y: 0.6),
+                ]),
+            ],
+            createdAt: try createdAt(),
+            sessionId: sessionId
+        )
+        let root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: bundle.manifestJSON) as? [String: Any]
+        )
+        let annotations = try XCTUnwrap(root["annotations"] as? [[String: Any]])
+        XCTAssertEqual(
+            annotations.compactMap { $0["id"] as? String },
+            ["native-circle", "native-circle-2"]
+        )
+    }
+
+    func testBuilderRequiresRenderableAnnotations() throws {
+        let png = try pngFixture()
+        let arrow = NativeCaptureAnnotation(kind: .arrow, points: [
+            NativeCapturePoint(x: 0.1, y: 0.1),
+            NativeCapturePoint(x: 0.8, y: 0.8),
+        ])
+
+        XCTAssertThrowsError(
+            try NativeCaptureBundleBuilder.build(pngData: png, note: note, annotations: [])
+        ) {
+            XCTAssertEqual($0 as? NativeCaptureBundleError, .missingAnnotation)
+        }
+        XCTAssertThrowsError(
+            try NativeCaptureBundleBuilder.build(
+                pngData: png,
+                note: note,
+                annotations: [
+                    NativeCaptureAnnotation(kind: .arrow, points: [
+                        NativeCapturePoint(x: 0.9, y: 0.1),
+                        NativeCapturePoint(x: 1.4, y: 0.8),
+                    ])
+                ]
+            )
+        ) {
+            XCTAssertEqual($0 as? NativeCaptureBundleError, .invalidAnnotation)
+        }
+        XCTAssertThrowsError(
+            try NativeCaptureBundleBuilder.build(
+                pngData: png,
+                note: note,
+                annotations: [
+                    NativeCaptureAnnotation(kind: .highlight, points: [
+                        NativeCapturePoint(x: 0.2, y: 0.2),
+                        NativeCapturePoint(x: 0.7, y: 0.2),
+                    ])
+                ]
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? NativeCaptureBundleError,
+                .invalidAnnotation,
+                "A zero-height highlight would not be visible"
+            )
+        }
+        XCTAssertThrowsError(
+            try NativeCaptureBundleBuilder.build(
+                pngData: png,
+                note: note,
+                annotations: [
+                    NativeCaptureAnnotation(kind: .freehand, points: [
+                        NativeCapturePoint(x: 0.2, y: 0.2),
+                    ])
+                ]
+            )
+        ) {
+            XCTAssertEqual($0 as? NativeCaptureBundleError, .invalidAnnotation)
+        }
+        XCTAssertNoThrow(
+            try NativeCaptureBundleBuilder.build(pngData: png, note: note, annotations: [arrow])
+        )
+    }
+
+    func testAnnotationRenderabilityMatchesBrowserGeometry() throws {
+        let arrow = NativeCaptureAnnotation(kind: .arrow, points: [
+            NativeCapturePoint(x: 0.1, y: 0.1),
+            NativeCapturePoint(x: 0.8, y: 0.1),
+        ])
+        XCTAssertTrue(arrow.isRenderable(imageWidth: 64, imageHeight: 48))
+        XCTAssertEqual(try XCTUnwrap(arrow.normalizedBounds?.width), 0.7, accuracy: 1e-9)
+
+        let flatHighlight = NativeCaptureAnnotation(kind: .highlight, points: [
+            NativeCapturePoint(x: 0.1, y: 0.5),
+            NativeCapturePoint(x: 0.9, y: 0.5),
+        ])
+        XCTAssertFalse(flatHighlight.isRenderable(imageWidth: 64, imageHeight: 48))
+
+        let singlePointStroke = NativeCaptureAnnotation(kind: .freehand, points: [
+            NativeCapturePoint(x: 0.5, y: 0.5),
+        ])
+        XCTAssertFalse(singlePointStroke.isRenderable(imageWidth: 64, imageHeight: 48))
+
+        let clippedStroke = NativeCaptureAnnotation(kind: .freehand, points: [
+            NativeCapturePoint(x: -0.1, y: 0.5),
+            NativeCapturePoint(x: 0.5, y: 0.5),
+        ])
+        XCTAssertFalse(clippedStroke.isRenderable(imageWidth: 64, imageHeight: 48))
+    }
+
     func testArchiveRoundTripsThroughStandardUnzip() throws {
         let bundle = try bundle()
         let directory = FileManager.default.temporaryDirectory

@@ -37,6 +37,8 @@ public enum NativeCaptureBundleError: LocalizedError, Equatable {
     case invalidImage
     case emptyNote
     case noteTooLong
+    case missingAnnotation
+    case invalidAnnotation
     case invalidHighlight
     case invalidSessionId
     case archiveTooLarge
@@ -49,6 +51,10 @@ public enum NativeCaptureBundleError: LocalizedError, Equatable {
             return "Add a short note before saving the capture."
         case .noteTooLong:
             return "Keep the note under 2,000 characters."
+        case .missingAnnotation:
+            return "Draw at least one annotation on the capture."
+        case .invalidAnnotation:
+            return "Keep every annotation inside the capture and make it large enough to see."
         case .invalidHighlight:
             return "Draw a highlight rectangle on the capture."
         case .invalidSessionId:
@@ -64,12 +70,17 @@ public enum NativeCaptureBundleError: LocalizedError, Equatable {
 /// the same call can be tested with a fixture image and a fixed timestamp.
 public enum NativeCaptureBundleBuilder {
     public static let maximumNoteLength = 2_000
+    public static let maximumAnnotationCount = NativeCaptureAnnotationLimits.maximumAnnotations
     private static let pageURL = "highlite://native-capture/still"
 
+    /// Builds a still capture with the full browser annotation set. Annotations
+    /// keep their draw order and are all attached to the single still keyframe,
+    /// so the compiler burns them together exactly as it does for a browser
+    /// capture.
     public static func build(
         pngData: Data,
         note: String,
-        highlight: NativeCaptureRect,
+        annotations: [NativeCaptureAnnotation],
         createdAt: Date = Date(),
         sessionId: String? = nil
     ) throws -> NativeCaptureBundle {
@@ -81,7 +92,7 @@ public enum NativeCaptureBundleBuilder {
         guard trimmedNote.count <= maximumNoteLength else {
             throw NativeCaptureBundleError.noteTooLong
         }
-        try validate(highlight, imageWidth: imageWidth, imageHeight: imageHeight)
+        try validate(annotations, imageWidth: imageWidth, imageHeight: imageHeight)
 
         let identifier = sessionId ?? defaultSessionId(createdAt: createdAt)
         guard isValidSessionId(identifier) else {
@@ -94,7 +105,7 @@ public enum NativeCaptureBundleBuilder {
             note: trimmedNote,
             imageWidth: imageWidth,
             imageHeight: imageHeight,
-            highlight: highlight
+            annotations: annotations
         )
         let archive = try StoredZip.archive(entries: [
             StoredZip.Entry(name: "manifest.json", data: manifestData),
@@ -110,6 +121,44 @@ public enum NativeCaptureBundleBuilder {
             manifestJSON: manifestData,
             archive: archive
         )
+    }
+
+    /// Backward-compatible single-highlight entry point for existing callers.
+    /// A lone highlight keeps the canonical `native-highlight` annotation id and
+    /// therefore the same manifest shape.
+    public static func build(
+        pngData: Data,
+        note: String,
+        highlight: NativeCaptureRect,
+        createdAt: Date = Date(),
+        sessionId: String? = nil
+    ) throws -> NativeCaptureBundle {
+        do {
+            return try build(
+                pngData: pngData,
+                note: note,
+                annotations: [
+                    NativeCaptureAnnotation(
+                        kind: .highlight,
+                        points: [
+                            NativeCapturePoint(x: highlight.x, y: highlight.y),
+                            NativeCapturePoint(x: highlight.maxX, y: highlight.maxY),
+                        ]
+                    )
+                ],
+                createdAt: createdAt,
+                sessionId: sessionId
+            )
+        } catch let error as NativeCaptureBundleError {
+            switch error {
+            case .missingAnnotation, .invalidAnnotation:
+                throw NativeCaptureBundleError.invalidHighlight
+            default:
+                throw error
+            }
+        } catch {
+            throw error
+        }
     }
 
     /// Reads the dimensions from a PNG's IHDR chunk. The relay's compiler is the
@@ -151,6 +200,23 @@ public enum NativeCaptureBundleBuilder {
         }
     }
 
+    static func validate(
+        _ annotations: [NativeCaptureAnnotation],
+        imageWidth: Int,
+        imageHeight: Int
+    ) throws {
+        guard !annotations.isEmpty else {
+            throw NativeCaptureBundleError.missingAnnotation
+        }
+        guard annotations.count <= maximumAnnotationCount,
+              annotations.allSatisfy({
+                  $0.isRenderable(imageWidth: imageWidth, imageHeight: imageHeight)
+              })
+        else {
+            throw NativeCaptureBundleError.invalidAnnotation
+        }
+    }
+
     static func defaultSessionId(createdAt: Date) -> String {
         let milliseconds = Int64((createdAt.timeIntervalSince1970 * 1_000).rounded())
         return "native-\(milliseconds)-\(UUID().uuidString.lowercased())"
@@ -187,7 +253,7 @@ public enum NativeCaptureBundleBuilder {
         note: String,
         imageWidth: Int,
         imageHeight: Int,
-        highlight: NativeCaptureRect
+        annotations: [NativeCaptureAnnotation]
     ) throws -> Data {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -208,40 +274,46 @@ public enum NativeCaptureBundleBuilder {
             pageUrl: pageURL,
             metadata: ["source": "macos-native", "captureMode": "still"]
         )
-        let annotation = ManifestAnnotation(
-            id: "native-highlight",
-            atMs: 0,
-            kind: "highlight",
-            points: [
-                ManifestPoint(x: highlight.x, y: highlight.y),
-                ManifestPoint(x: highlight.maxX, y: highlight.maxY),
-            ],
-            coordinateSpace: "viewport-normalized",
-            strokeWidth: 4,
-            targetId: region.id
-        )
-        let event = ManifestTimelineEvent(
-            id: "native-annotation",
-            seq: 0,
-            atMs: 0,
-            kind: "annotation",
-            targetId: region.id,
-            payload: ManifestAnnotationPayload(
-                annotationId: annotation.id,
-                annotationKind: annotation.kind,
-                x: width * highlight.x,
-                y: height * highlight.y
+        let annotationIds = annotationIdentifiers(for: annotations)
+        let eventIds = annotationEventIdentifiers(for: annotations)
+        let manifestAnnotations = annotations.indices.map { index -> ManifestAnnotation in
+            let annotation = annotations[index]
+            return ManifestAnnotation(
+                id: annotationIds[index],
+                atMs: 0,
+                kind: annotation.kind.rawValue,
+                points: annotation.points.map { ManifestPoint(x: $0.x, y: $0.y) },
+                coordinateSpace: "viewport-normalized",
+                strokeWidth: NativeCaptureAnnotationLimits.strokeWidth,
+                targetId: region.id
             )
-        )
+        }
+        let timeline = annotations.indices.map { index -> ManifestTimelineEvent in
+            let annotation = annotations[index]
+            let origin = annotation.points[0]
+            return ManifestTimelineEvent(
+                id: eventIds[index],
+                seq: index,
+                atMs: 0,
+                kind: "annotation",
+                targetId: region.id,
+                payload: ManifestAnnotationPayload(
+                    annotationId: annotationIds[index],
+                    annotationKind: annotation.kind.rawValue,
+                    x: width * origin.x,
+                    y: height * origin.y
+                )
+            )
+        }
         let keyframe = ManifestKeyframe(
             id: "native-frame",
             atMs: 0,
             imagePath: "capture.png",
             targetIds: [region.id],
-            annotationIds: [annotation.id],
+            annotationIds: annotationIds,
             transcriptSegmentIds: [],
             reason: "annotation",
-            eventIds: [event.id]
+            eventIds: eventIds
         )
         let manifest = Manifest(
             schemaVersion: "0.1.0",
@@ -253,9 +325,9 @@ public enum NativeCaptureBundleBuilder {
             ),
             viewport: viewport,
             durationMs: 0,
-            timeline: [event],
+            timeline: timeline,
             targets: [region],
-            annotations: [annotation],
+            annotations: manifestAnnotations,
             transcript: [],
             keyframes: [keyframe],
             artifacts: ManifestArtifacts(),
@@ -267,6 +339,33 @@ public enum NativeCaptureBundleBuilder {
         var data = try encoder.encode(manifest)
         data.append(0x0A)
         return data
+    }
+
+    /// A lone highlight keeps its legacy id so existing still-capture manifests
+    /// stay byte-compatible. Other kinds use one id per kind, with a suffix when
+    /// the same tool is used more than once.
+    private static func annotationIdentifiers(
+        for annotations: [NativeCaptureAnnotation]
+    ) -> [String] {
+        if annotations.count == 1, annotations[0].kind == .highlight {
+            return ["native-highlight"]
+        }
+        var counts: [NativeCaptureAnnotationKind: Int] = [:]
+        return annotations.map { annotation in
+            let occurrence = (counts[annotation.kind] ?? 0) + 1
+            counts[annotation.kind] = occurrence
+            let base = "native-\(annotation.kind.rawValue)"
+            return occurrence == 1 ? base : "\(base)-\(occurrence)"
+        }
+    }
+
+    private static func annotationEventIdentifiers(
+        for annotations: [NativeCaptureAnnotation]
+    ) -> [String] {
+        if annotations.count == 1 {
+            return ["native-annotation"]
+        }
+        return annotations.indices.map { "native-annotation-\($0 + 1)" }
     }
 }
 

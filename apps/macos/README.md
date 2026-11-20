@@ -216,20 +216,21 @@ poll the screen, inspect the focused window, or request Accessibility access.
 The item is enabled only while the relay is running and an ingest token is
 available.
 
-After the selection, a native review window shows the exact PNG. Drag once to
-add one rectangle highlight, add a note, then choose **Save to Highlite**. The
-app builds the canonical `manifest.json` plus `capture.png` ZIP in a private
-temporary directory and POSTs it to the relay's existing local
-`/v1/sessions` ingest endpoint with the stored ingest token. It then deletes the
-temporary copy and refreshes Sessions. The app itself calls no Jira, OpenCode, or
-provider endpoint. Existing relay recipes behave for this session exactly as
-they do for a browser capture.
+After the selection, a native review window shows the exact PNG. Use the browser
+SDK's freehand, circle, arrow, and highlight tools to add any number of
+annotations, with **Undo** and **Clear** for revisions. Add a note, then choose
+**Save to Highlite**. The app builds the canonical `manifest.json` plus
+`capture.png` ZIP in a private temporary directory and POSTs it to the relay's
+existing local `/v1/sessions` ingest endpoint with the stored ingest token. It
+then deletes the temporary copy and refreshes Sessions. The app itself calls no
+Jira, OpenCode, or provider endpoint. Existing relay recipes behave for this
+session exactly as they do for a browser capture.
 
 The still path has no microphone audio, page DOM, browser embed, or automatic
 screen monitoring. The user chooses the region or window; captured pixels are
-not automatically redacted. The highlight is stored as a normalized annotation
-and burned into compiled keyframes by the canonical compiler. The relay receives
-the clean screenshot, not a flattened preview.
+not automatically redacted. The annotations are stored as normalized geometry in
+draw order and burned into the single compiled keyframe by the canonical
+compiler. The relay receives the clean screenshot, not a flattened preview.
 
 ### Native screen recording (macOS 15+)
 

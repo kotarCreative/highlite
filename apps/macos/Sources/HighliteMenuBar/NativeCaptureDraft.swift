@@ -3,8 +3,8 @@ import Combine
 import Foundation
 import HighliteMenuBarCore
 
-/// Editable state for one still capture. The PNG stays untouched; the highlight
-/// is stored as a normalized rectangle and burned into bundle frames by the
+/// Editable state for one still capture. The PNG stays untouched; annotations
+/// are stored as normalized geometry and burned into bundle frames by the
 /// canonical compiler, exactly like browser annotations.
 @MainActor
 final class NativeCaptureDraft: ObservableObject {
@@ -15,7 +15,8 @@ final class NativeCaptureDraft: ObservableObject {
     let createdAt: Date
 
     @Published var note = ""
-    @Published var highlight: NativeCaptureRect?
+    @Published var selectedTool: NativeCaptureAnnotationKind = .highlight
+    @Published var annotations: [NativeCaptureAnnotation] = []
 
     init(pngData: Data, createdAt: Date = Date()) throws {
         let (width, height) = try NativeCaptureBundleBuilder.imageDimensions(in: pngData)
@@ -31,19 +32,36 @@ final class NativeCaptureDraft: ObservableObject {
 
     var canSave: Bool {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        return highlight != nil
+        return !annotations.isEmpty
             && !trimmed.isEmpty
             && trimmed.count <= NativeCaptureBundleBuilder.maximumNoteLength
     }
 
-    func makeBundle() throws -> NativeCaptureBundle {
-        guard let highlight else {
-            throw NativeCaptureBundleError.invalidHighlight
+    @discardableResult
+    func addAnnotation(_ annotation: NativeCaptureAnnotation) -> Bool {
+        guard annotations.count < NativeCaptureBundleBuilder.maximumAnnotationCount,
+              annotation.isRenderable(imageWidth: imageWidth, imageHeight: imageHeight)
+        else {
+            return false
         }
+        annotations.append(annotation)
+        return true
+    }
+
+    func undoLastAnnotation() {
+        guard !annotations.isEmpty else { return }
+        annotations.removeLast()
+    }
+
+    func clearAnnotations() {
+        annotations.removeAll()
+    }
+
+    func makeBundle() throws -> NativeCaptureBundle {
         return try NativeCaptureBundleBuilder.build(
             pngData: pngData,
             note: note,
-            highlight: highlight,
+            annotations: annotations,
             createdAt: createdAt
         )
     }

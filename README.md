@@ -224,10 +224,11 @@ for setup, data sharing, and failure handling.
 
 `apps/macos` is a Swift Package Manager menu bar app that supervises the relay and opens
 its dashboard. It supports explicit still captures and, on macOS 15+, screen recordings;
-recording uses the macOS 15 system picker for one window or display, never system audio,
-and adds microphone narration only after an explicit opt-in. Saves go to the local relay
-without embedding a site; it requires macOS 14+ and the macOS 15 SDK (Xcode 16+) to
-compile, plus Swift 5.9+ and Cargo. Build it with
+still-capture review offers the browser's freehand, circle, arrow, and highlight
+annotations, while recording uses the macOS 15 system picker for one window or display,
+never system audio, and adds microphone narration only after an explicit opt-in. Saves
+go to the local relay without embedding a site; it requires macOS 14+ and the macOS 15
+SDK (Xcode 16+) to compile, plus Swift 5.9+ and Cargo. Build it with
 `pnpm build:macos`; `pnpm verify:macos` runs static package checks on Linux and the full
 Swift build/test plus bundle/signature verification on macOS. The bundle is ad-hoc signed,
 **not notarized**, and builds for the host architecture only.

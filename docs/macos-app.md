@@ -188,17 +188,21 @@ choose a window; there is no background screen monitoring, focused-window query,
 Accessibility dependency. Screen Recording permission is managed by macOS in
 **System Settings → Privacy & Security → Screen Recording**.
 
-The review window previews the PNG, accepts one highlight rectangle drawn directly on
-the image, and requires a short note. Saving builds a two-entry ZIP (`manifest.json` and
-`capture.png`) and sends it to the local relay's existing `POST /v1/sessions` ingest
-endpoint with the stored ingest token. The relay then compiles it through the same
-manifest/keyframe pipeline as a browser capture. The app deletes its temporary screenshot
-after uploading; the still path does not embed a website, record microphone audio, read
-the page DOM, or call Jira/OpenCode/provider APIs itself.
+The review window previews the PNG and offers the browser SDK's full annotation set:
+freehand, circle, arrow, and highlight. Draw any number of annotations directly on the
+image, switch tools between strokes, and use **Undo** or **Clear** to revise them. A
+short note is required. Saving builds a two-entry ZIP (`manifest.json` and `capture.png`)
+and sends it to the local relay's existing `POST /v1/sessions` ingest endpoint with the
+stored ingest token. The relay then compiles it through the same manifest/keyframe
+pipeline as a browser capture. The app deletes its temporary screenshot after uploading;
+the still path does not embed a website, record microphone audio, read the page DOM, or
+call Jira/OpenCode/provider APIs itself.
 
 The note becomes the session title and the target label used by the compiled summary.
-The relay sees the unflattened screenshot plus the normalized annotation, so the
-canonical compiler remains the only annotation renderer.
+The relay sees the unflattened screenshot plus the normalized annotations, so the
+canonical compiler remains the only annotation renderer. All annotations are attached to
+the single still keyframe in draw order and are burned into it together, matching the
+browser capture contract.
 
 ### Native screen recording (macOS 15+)
 
@@ -272,6 +276,7 @@ apps/macos/
       OpenCodeLocator.swift
       AppSettings.swift
       JSONValue.swift
+      NativeCaptureAnnotation.swift
       NativeCaptureBundle.swift
       NativeCaptureCommand.swift
       NativeRecordingBundle.swift
@@ -285,6 +290,7 @@ apps/macos/
       NativeRecordingController.swift
       NativeRecordingDraft.swift
       Views/
+        AnnotationCanvas.swift
         CaptureReviewView.swift
         RecordingReviewView.swift
         RecordingSetupView.swift
@@ -330,10 +336,11 @@ After launching from `dist/Highlite.app`:
 9. Inspect `/v1/activity` and confirm no prompt text, drafts, capture summaries, or
    credentials appear.
 10. Choose **Capture Screen…**, grant Screen Recording if macOS asks, capture a region,
-    draw one highlight, enter a note, and save. Confirm the new session appears in
-    Sessions with the note as its title, and that a bundle downloads with a rendered
-    keyframe containing the highlight. Cancel a second capture from the system UI and
-    confirm no session is created.
+    draw a freehand stroke, a circle, an arrow, and a highlight (using Undo and Clear at
+    least once), enter a note, and save. Confirm the new session appears in Sessions with
+    the note as its title, and that a bundle downloads with one keyframe containing all
+    four annotation kinds. Cancel a second capture from the system UI and confirm no
+    session is created.
 11. Choose **Record Screen…**. Confirm microphone audio is off by default. Pick one
     window or display from the system picker and confirm the menu bar shows **● REC**
     and **Stop Recording**. Stop, play the movie in the review window, mark the poster,

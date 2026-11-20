@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import HighliteMenuBarCore
 
-/// Native review window for one still capture: preview, one highlight
-/// rectangle, a note, and an explicit save to the local relay.
+/// Native review window for one still capture: preview, the browser SDK's
+/// annotation tools, a note, and an explicit save to the local relay.
 struct CaptureReviewView: View {
     @ObservedObject var draft: NativeCaptureDraft
     let onSave: @MainActor (NativeCaptureBundle) async throws -> SessionMetadata
@@ -15,6 +15,7 @@ struct CaptureReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            toolBar
             preview
             noteEditor
             if let errorMessage {
@@ -35,9 +36,10 @@ struct CaptureReviewView: View {
                 Text("Review screen capture")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(DashboardTheme.ink)
-                Text("Drag on the image to highlight one area. The capture stays local until you save it to the relay.")
+                Text("Draw with freehand, circle, arrow, or highlight. The capture stays local until you save it to the relay.")
                     .font(.callout)
                     .foregroundStyle(DashboardTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
             Text("\(draft.imageWidth) × \(draft.imageHeight) px")
@@ -49,52 +51,27 @@ struct CaptureReviewView: View {
         }
     }
 
+    private var toolBar: some View {
+        AnnotationToolbar(
+            selectedTool: $draft.selectedTool,
+            annotations: draft.annotations,
+            onUndo: draft.undoLastAnnotation,
+            onClear: draft.clearAnnotations
+        )
+    }
+
     private var preview: some View {
-        GeometryReader { proxy in
-            let fitted = Self.fittedRect(
-                width: draft.imageWidth,
-                height: draft.imageHeight,
-                in: proxy.size
-            )
-            ZStack(alignment: .topLeading) {
-                DashboardTheme.neutralSoft
-                Image(nsImage: draft.image)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: fitted.width, height: fitted.height)
-                    .position(x: fitted.midX, y: fitted.midY)
-                if let highlight = draft.highlight {
-                    let display = Self.displayRect(highlight, in: fitted)
-                    Rectangle()
-                        .fill(DashboardTheme.highlightYellow.opacity(0.38))
-                        .overlay {
-                            Rectangle()
-                                .strokeBorder(DashboardTheme.primary, lineWidth: 2)
-                        }
-                        .frame(width: display.width, height: display.height)
-                        .position(x: display.midX, y: display.midY)
-                        .allowsHitTesting(false)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: DashboardStyle.cardCornerRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: DashboardStyle.cardCornerRadius)
-                    .strokeBorder(DashboardTheme.lineStrong, lineWidth: 1)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 2, coordinateSpace: .local)
-                    .onChanged { value in
-                        updateHighlight(
-                            from: value.startLocation,
-                            to: value.location,
-                            fitted: fitted
-                        )
-                    }
-            )
-            .accessibilityLabel("Captured screen image")
-            .accessibilityHint("Drag to add a highlight rectangle")
-        }
+        AnnotationCanvas(
+            image: draft.image,
+            imageWidth: draft.imageWidth,
+            imageHeight: draft.imageHeight,
+            annotations: draft.annotations,
+            selectedTool: draft.selectedTool,
+            accessibilityLabel: "Captured screen image",
+            accessibilityHint: "Drag to draw with the selected annotation tool",
+            canDraw: draft.annotations.count < NativeCaptureBundleBuilder.maximumAnnotationCount,
+            onAddAnnotation: { draft.addAnnotation($0) }
+        )
         .frame(minHeight: 340, maxHeight: .infinity)
     }
 
@@ -109,9 +86,9 @@ struct CaptureReviewView: View {
                 .accessibilityLabel("Capture note")
             HStack(alignment: .firstTextBaseline) {
                 Text(
-                    draft.highlight == nil
-                        ? "Add one highlight rectangle and a note to save."
-                        : "The note becomes the session title and highlights the marked region."
+                    draft.annotations.isEmpty
+                        ? "Add at least one annotation and a note to save."
+                        : "The note becomes the session title; annotations are burned into the compiled keyframe."
                 )
                 .font(.caption)
                 .foregroundStyle(DashboardTheme.muted)
@@ -168,46 +145,4 @@ struct CaptureReviewView: View {
         }
     }
 
-    private func updateHighlight(from start: CGPoint, to end: CGPoint, fitted: CGRect) {
-        guard fitted.width > 0, fitted.height > 0 else { return }
-        let first = Self.normalizedPoint(start, in: fitted)
-        let last = Self.normalizedPoint(end, in: fitted)
-        let rect = NativeCaptureRect(
-            x: min(first.x, last.x),
-            y: min(first.y, last.y),
-            width: abs(last.x - first.x),
-            height: abs(last.y - first.y)
-        )
-        if rect.width * Double(draft.imageWidth) >= 2,
-           rect.height * Double(draft.imageHeight) >= 2 {
-            draft.highlight = rect
-        }
-    }
-
-    private static func normalizedPoint(_ point: CGPoint, in fitted: CGRect) -> CGPoint {
-        let x = min(max((point.x - fitted.minX) / fitted.width, 0), 1)
-        let y = min(max((point.y - fitted.minY) / fitted.height, 0), 1)
-        return CGPoint(x: x, y: y)
-    }
-
-    private static func fittedRect(width: Int, height: Int, in size: CGSize) -> CGRect {
-        guard width > 0, height > 0, size.width > 0, size.height > 0 else { return .zero }
-        let scale = min(size.width / CGFloat(width), size.height / CGFloat(height))
-        let fitted = CGSize(width: CGFloat(width) * scale, height: CGFloat(height) * scale)
-        return CGRect(
-            x: (size.width - fitted.width) / 2,
-            y: (size.height - fitted.height) / 2,
-            width: fitted.width,
-            height: fitted.height
-        )
-    }
-
-    private static func displayRect(_ highlight: NativeCaptureRect, in fitted: CGRect) -> CGRect {
-        CGRect(
-            x: fitted.minX + CGFloat(highlight.x) * fitted.width,
-            y: fitted.minY + CGFloat(highlight.y) * fitted.height,
-            width: CGFloat(highlight.width) * fitted.width,
-            height: CGFloat(highlight.height) * fitted.height
-        )
-    }
 }
