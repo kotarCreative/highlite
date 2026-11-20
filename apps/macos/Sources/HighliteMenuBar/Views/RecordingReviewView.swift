@@ -18,12 +18,6 @@ struct RecordingReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            AnnotationToolbar(
-                selectedTool: $draft.selectedTool,
-                annotations: draft.selectedAnnotations,
-                onUndo: draft.undoLastAnnotation,
-                onClear: draft.clearAnnotations
-            )
             HStack(alignment: .top, spacing: 14) {
                 videoPane
                 framePane
@@ -61,7 +55,7 @@ struct RecordingReviewView: View {
                 Text("Review screen recording")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(DashboardTheme.ink)
-                Text("Pause where something matters, add that frame, then draw with freehand, circle, arrow, or highlight. The recording stays local until you save it to the relay.")
+                Text("Pause where something matters, add that frame, then draw with freehand, circle, arrow, or highlight. Strokes from the live annotation bar are added automatically. The recording stays local until you save it to the relay.")
                     .font(.callout)
                     .foregroundStyle(DashboardTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -146,7 +140,7 @@ struct RecordingReviewView: View {
                     )
                 }
                 .buttonStyle(.bordered)
-                .disabled(draft.isCapturingFrame || !draft.canAddMoment)
+                .disabled(draft.isCapturingFrame || draft.isImportingLiveAnnotations || !draft.canAddMoment)
                 .help("Pauses playback and captures the current frame for annotation")
                 Spacer(minLength: 8)
                 Text("Frames must be half a second from the poster and each other.")
@@ -180,6 +174,32 @@ struct RecordingReviewView: View {
                 onAddAnnotation: { draft.addAnnotation($0) }
             )
             .frame(minHeight: 280, maxHeight: .infinity)
+            AnnotationToolbar(
+                selectedTool: $draft.selectedTool,
+                annotations: draft.selectedAnnotations,
+                onUndo: draft.undoLastAnnotation,
+                onClear: draft.clearAnnotations,
+                compact: true
+            )
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                DashboardTheme.neutralSoft.opacity(0.55),
+                in: RoundedRectangle(cornerRadius: DashboardStyle.controlCornerRadius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: DashboardStyle.controlCornerRadius)
+                    .strokeBorder(DashboardTheme.lineStrong, lineWidth: 1)
+            }
+            if let liveAnnotationStatus = draft.liveAnnotationStatus {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(liveAnnotationStatus)
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.muted)
+                }
+            }
             Text("The poster is the opening frame. Each captured frame becomes its own keyframe, and annotations are burned into that keyframe by the canonical compiler.")
                 .font(.caption)
                 .foregroundStyle(DashboardTheme.muted)
@@ -336,7 +356,7 @@ struct RecordingReviewView: View {
 
     @MainActor
     private func captureFrame() async {
-        guard !draft.isCapturingFrame else { return }
+        guard !draft.isCapturingFrame, !draft.isImportingLiveAnnotations else { return }
         errorMessage = nil
         do {
             try await draft.captureFrameForAnnotation()

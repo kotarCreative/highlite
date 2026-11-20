@@ -28,8 +28,8 @@ enum AppWindowLayout {
     static let reviewMinimumContentSize = NSSize(width: 780, height: 660)
 
     static let captureContentSize = NSSize(width: 960, height: 760)
-    // The annotation tool row sits above the preview; keep enough height that the
-    // preview, note, and footer remain visible at the minimum window size.
+    // The annotation tool row sits at the bottom of the preview; keep enough
+    // height that the image, toolbar, note, and footer remain visible.
     static let captureMinimumContentSize = NSSize(width: 720, height: 660)
 
     static let recordingSetupContentSize = NSSize(width: 580, height: 500)

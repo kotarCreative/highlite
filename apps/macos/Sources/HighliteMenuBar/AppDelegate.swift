@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var recordingReviewWindow: NSWindow?
     private var recordingDraft: NativeRecordingDraft?
     private let recordingController = NativeRecordingController()
+    private let liveAnnotations = NativeLiveAnnotationSession()
     private var recordMenuItem: NSMenuItem?
     private var stopRecordingMenuItem: NSMenuItem?
     private var isCapturingStill = false
@@ -50,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         Task {
             recordingDraft?.discard()
             recordingDraft = nil
+            liveAnnotations.cancel()
             await recordingController.shutdown()
             await model.shutdown()
             sender.reply(toApplicationShouldTerminate: true)
@@ -195,8 +197,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             }
             .store(in: &cancellables)
         recordingController.$phase
-            .sink { [weak self] _ in
-                Task { @MainActor in self?.updateChrome() }
+            .sink { [weak self] phase in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if case .recording = phase {
+                        // Keep the live bar and drawing surface on screen.
+                    } else {
+                        self.liveAnnotations.pauseForStop()
+                    }
+                    self.updateChrome()
+                }
             }
             .store(in: &cancellables)
         recordingController.$completedOutput
@@ -500,8 +510,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func startRecording(includeMicrophone: Bool) async {
         do {
             try await recordingController.start(includeMicrophone: includeMicrophone)
+            if case .recording(let startedAt, _) = recordingController.phase {
+                liveAnnotations.begin(
+                    recordingStartedAt: startedAt,
+                    captureArea: recordingController.captureArea,
+                    onStop: { [weak self] in
+                        Task { @MainActor in
+                            await self?.stopRecordingNow()
+                        }
+                    }
+                )
+            }
             model.setNotice(nil)
         } catch {
+            liveAnnotations.cancel()
             model.setNotice("Screen recording did not start: \(error.localizedDescription)")
         }
         updateChrome()
@@ -509,6 +531,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     private func stopRecordingNow() async {
         guard recordingController.isRecording else { return }
+        liveAnnotations.pauseForStop()
         do {
             // Presentation is driven by the controller's completedOutput.
             _ = try await recordingController.stop()
@@ -519,9 +542,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func presentCompletedRecording(_ output: NativeRecordingOutput) {
+        let liveStrokes = liveAnnotations.finish()
         do {
             let draft = try NativeRecordingDraft(output: output)
             showRecordingReview(draft)
+            if !liveStrokes.isEmpty {
+                Task { @MainActor [weak self] in
+                    await draft.importLiveAnnotations(liveStrokes)
+                    self?.updateChrome()
+                }
+            }
         } catch {
             NativeRecordingTempStore.remove(output.directory)
             recordingController.finishReview()

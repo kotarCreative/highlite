@@ -254,6 +254,10 @@ public final class NativeRecordingService: NSObject, ObservableObject {
     @Published public private(set) var state: State = .idle
     @Published public private(set) var progress: NativeRecordingProgress = .zero
     @Published public private(set) var lastResult: NativeRecordingResult?
+    /// The window or display rectangle that ScreenCaptureKit is capturing.
+    /// The live annotation bar uses it to sit over the recording area; it is
+    /// read-only and does not participate in the capture lifecycle.
+    @Published public private(set) var captureArea: NativeRecordingCaptureArea?
     public private(set) var lastError: NativeRecordingError?
     public private(set) var microphoneRequested = false
 
@@ -504,6 +508,11 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         guard let directory = workingDirectory else {
             throw NativeRecordingError.temporaryDirectoryFailed("No workspace is available.")
         }
+
+        captureArea = NativeRecordingCaptureArea(
+            contentRect: filter.contentRect,
+            pointPixelScale: CGFloat(filter.pointPixelScale)
+        )
 
         let dimensions = videoDimensions(for: filter)
         var configuration = SCStreamConfiguration()
@@ -1359,6 +1368,7 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         stopGate.reset()
         workingDirectory = nil
         finalizationTask = nil
+        captureArea = nil
 
         recordingStarted = false
         recordingDidFinish = false

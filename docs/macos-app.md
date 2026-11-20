@@ -189,8 +189,10 @@ Accessibility dependency. Screen Recording permission is managed by macOS in
 **System Settings → Privacy & Security → Screen Recording**.
 
 The review window previews the PNG and offers the browser SDK's full annotation set:
-freehand, circle, arrow, and highlight. Draw any number of annotations directly on the
-image, switch tools between strokes, and use **Undo** or **Clear** to revise them. A
+freehand, circle, arrow, and highlight. The annotation toolbar sits directly beneath the
+preview so the tools are visible at the bottom of the captured image as soon as the
+system selection finishes. Draw any number of annotations directly on the image, switch
+tools between strokes, and use **Undo** or **Clear** to revise them. A
 short note is required. Saving builds a two-entry ZIP (`manifest.json` and `capture.png`)
 and sends it to the local relay's existing `POST /v1/sessions` ingest endpoint with the
 stored ingest token. The relay then compiles it through the same manifest/keyframe
@@ -234,12 +236,27 @@ from each other, matching the compiler's duplicate-frame rule, so each reviewed 
 survives compilation. Annotations
 are stored as normalized geometry, attached to the keyframe they were drawn on, and burned
 into that keyframe by the canonical compiler. Multi-frame manifests give each annotation a
-short fade so it does not bleed into later keyframes. Unlike the browser toolbar, the
-native recorder does not draw a live overlay into the captured window; annotation happens
-in review on the poster and extracted frames, while the resulting manifest keeps the same
-keyframe-and-annotation model as a browser capture. The app does not launch a downstream
-Jira, OpenCode, or provider action; configured relay recipes react to the ingested session
-as they do for any capture.
+short fade so it does not bleed into later keyframes.
+
+While capture is running, Highlite keeps a floating annotation bar at the bottom of the
+selected window or display and a transparent drawing surface over that same region. The
+bar shows **REC** and elapsed time, an **Annotate** toggle, all four annotation tools,
+**Undo**, **Clear**, and a **Stop** button. The drawing surface is click-through until
+**Annotate** is chosen, so ordinary recording leaves pointer behavior unchanged. Choose
+**Done** to return to normal clicks. Each completed stroke is timestamped from the start
+of capture; when recording stops, Highlite extracts the matching movie frames and adds
+them as annotated keyframes in the normal review. Strokes drawn within the compiler's
+half-second duplicate-frame window share one keyframe, and the planner keeps the keyframe
+count inside the compiler budget.
+
+The floating bar and drawing surface set `sharingType = .none`, but macOS treats that as a
+legacy hint, so a display recording can still include the visible ink or bar. A window-only
+recording does not include them because the overlay is not one of the captured window's
+own windows. The persisted keyframes remain the authoritative annotation record in either
+case. The live overlay supports the system picker's one-display and one-window modes; it
+does not use the picker's multi-window or application modes. The app does not launch a
+downstream Jira, OpenCode, or provider action; configured relay recipes react to the
+ingested session as they do for any capture.
 
 One screen flow is active at a time. The still-capture picker and review, recording
 setup, active recording, and recording review are mutually exclusive. Saving failure
@@ -289,6 +306,7 @@ apps/macos/
       NativeCaptureAnnotation.swift
       NativeCaptureBundle.swift
       NativeCaptureCommand.swift
+      NativeLiveAnnotation.swift
       NativeRecordingBundle.swift
       NativeRecordingTempStore.swift
     HighliteMenuBar/
@@ -297,11 +315,13 @@ apps/macos/
       AppModel.swift
       NativeCaptureDraft.swift
       NativeCaptureService.swift
+      NativeLiveAnnotationSession.swift
       NativeRecordingController.swift
       NativeRecordingDraft.swift
       Views/
         AnnotationCanvas.swift
         CaptureReviewView.swift
+        NativeLiveAnnotationBar.swift
         RecordingReviewView.swift
         RecordingSetupView.swift
   Tests/HighliteMenuBarCoreTests/
@@ -353,11 +373,17 @@ After launching from `dist/Highlite.app`:
     session is created.
 11. Choose **Record Screen…**. Confirm microphone audio is off by default. Pick one
     window or display from the system picker and confirm the menu bar shows **● REC**
-    and **Stop Recording**. Stop, pause the movie at a moment, choose **Add frame from
-    playhead**, draw with more than one tool, then annotate the poster too. Enter a note
-    and save. Confirm the new session and a bundle whose manifest names `recording.mp4`,
-    lists one `moment-001.png` keyframe in addition to the poster, and whose ZIP contains
-    the movie, both frames, and manifest. Repeat with the microphone switch on and confirm
+    and **Stop Recording**. Confirm a floating bar also appears at the bottom of the
+    chosen window or display with **REC** elapsed time, **Annotate**, the four tools,
+    **Undo**, **Clear**, and **Stop**. Leave **Annotate** off and confirm ordinary clicks
+    reach the recorded app. Choose **Annotate**, draw a stroke over the content, choose
+    **Done**, then stop from the bar. In review, confirm the live stroke appears as an
+    extra annotated keyframe (or a short "Adding live annotation keyframe" status first),
+    then pause the movie at another moment, choose **Add frame from playhead**, draw with
+    more than one tool, and annotate the poster too. Enter a note and save. Confirm the
+    new session and a bundle whose manifest names `recording.mp4`, lists the live moment
+    plus `moment-NNN.png` keyframes in addition to the poster, and whose ZIP contains
+    the movie, every frame, and manifest. Repeat with the microphone switch on and confirm
     macOS asks for permission and the ZIP adds
     `recording.m4a`. Confirm there is no system-audio track.
 12. With a recording active, confirm **Capture Screen…** and **Record Screen…** cannot
@@ -376,8 +402,11 @@ After launching from `dist/Highlite.app`:
 - Native still capture has no microphone, DOM, browser embed, or background monitoring.
   Native recording captures one window or display and an optional microphone track; it
   never records system audio, DOM, or other windows, and only one screen flow can run at
-  a time. Relay-side tests cover copying the referenced video and audio artifacts into
-  the compiled bundle.
+  a time. The live annotation bar and transparent drawing surface are presentation-only;
+  `sharingType = .none` is a best-effort exclusion hint, so a display recording may
+  contain the visible overlay even though the saved keyframes remain authoritative.
+  Relay-side tests cover copying the referenced video and audio artifacts into the
+  compiled bundle.
 - Existing OpenCode sessions only; no creation of new sessions.
 - No exactly-once OpenCode delivery. Ambiguous submissions become `submit-unknown` and
   must be checked manually.

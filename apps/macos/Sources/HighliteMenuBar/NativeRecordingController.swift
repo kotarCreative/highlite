@@ -30,9 +30,16 @@ enum NativeRecordingState: Equatable {
 @MainActor
 protocol NativeScreenRecording: AnyObject {
     var statePublisher: AnyPublisher<NativeRecordingState, Never> { get }
+    /// The selected window or display rectangle, available once capture starts.
+    var captureArea: NativeRecordingCaptureArea? { get }
     func start(includeMicrophone: Bool) async throws
     func stop() async throws -> NativeRecordingOutput
     func cancel() async
+}
+
+@MainActor
+extension NativeScreenRecording {
+    var captureArea: NativeRecordingCaptureArea? { nil }
 }
 
 /// Narrow adapter over `NativeRecordingService`.
@@ -75,6 +82,10 @@ final class NativeRecordingServiceAdapter: NativeScreenRecording {
                 }
             }
             .eraseToAnyPublisher()
+    }
+
+    var captureArea: NativeRecordingCaptureArea? {
+        service.captureArea
     }
 
     func start(includeMicrophone: Bool) async throws {
@@ -194,6 +205,12 @@ final class NativeRecordingController: ObservableObject {
             return includeMicrophone
         }
         return false
+    }
+
+    /// The selected capture rectangle for the active recording. The overlay
+    /// is presentation-only; the recorder remains the source of truth.
+    var captureArea: NativeRecordingCaptureArea? {
+        recorder.captureArea
     }
 
     func start(includeMicrophone: Bool) async throws {

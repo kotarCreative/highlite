@@ -66,7 +66,7 @@ final class NativeRecordingDraft: ObservableObject {
     let imageWidth: Int
     let imageHeight: Int
     let durationMilliseconds: Int
-    let warnings: [String]
+    @Published private(set) var warnings: [String]
     let player: AVPlayer
 
     @Published var note = ""
@@ -78,8 +78,13 @@ final class NativeRecordingDraft: ObservableObject {
     @Published private(set) var playbackTimeMilliseconds = 0
     @Published private(set) var isPlaying = false
     @Published private(set) var isCapturingFrame = false
+    /// True while live strokes are being turned into keyframe PNGs. Saving is
+    /// blocked so the archive cannot omit annotations the user just drew.
+    @Published private(set) var isImportingLiveAnnotations = false
+    @Published private(set) var liveAnnotationStatus: String? = nil
 
     private var discarded = false
+    private var pendingDiscard = false
     private var timeObserver: Any?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -122,7 +127,8 @@ final class NativeRecordingDraft: ObservableObject {
 
     var canSave: Bool {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty
+        return !isImportingLiveAnnotations
+            && !trimmed.isEmpty
             && trimmed.count <= NativeRecordingBundleBuilder.maximumNoteLength
     }
 
@@ -248,6 +254,11 @@ final class NativeRecordingDraft: ObservableObject {
     /// compiler's duplicate-frame rule cannot merge them.
     func captureFrameForAnnotation() async throws {
         guard !discarded else { return }
+        guard !isImportingLiveAnnotations else {
+            throw NativeRecordingDraftError.frameExtractionFailed(
+                "Live annotation keyframes are still being prepared."
+            )
+        }
         guard !isCapturingFrame else { return }
         guard canAddMoment else {
             throw NativeRecordingDraftError.tooManyFrames(
@@ -282,7 +293,10 @@ final class NativeRecordingDraft: ObservableObject {
             generator.appliesPreferredTrackTransform = true
             // Match the recorder's poster budget so every frame shares the
             // manifest viewport dimensions even when the source video is 4K.
-            generator.maximumSize = CGSize(width: imageWidth, height: imageHeight)
+            generator.maximumSize = CGSize(
+                width: CGFloat(imageWidth),
+                height: CGFloat(imageHeight)
+            )
             let tolerance = CMTime(value: 1, timescale: 60)
             generator.requestedTimeToleranceBefore = tolerance
             generator.requestedTimeToleranceAfter = tolerance
@@ -315,6 +329,97 @@ final class NativeRecordingDraft: ObservableObject {
             throw error
         } catch {
             throw NativeRecordingDraftError.frameExtractionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Converts the strokes collected by the live overlay into annotated
+    /// keyframes. The movie is still the source image; the canonical compiler
+    /// remains the only renderer of the saved annotation geometry.
+    func importLiveAnnotations(_ strokes: [NativeLiveAnnotationStroke]) async {
+        guard !discarded, !strokes.isEmpty, !isImportingLiveAnnotations else { return }
+
+        let planned = NativeLiveAnnotationPlanner.moments(
+            from: strokes,
+            durationMilliseconds: durationMilliseconds,
+            imageWidth: imageWidth,
+            imageHeight: imageHeight
+        )
+        guard !planned.isEmpty else {
+            warnings.append("Live annotations were too small to become keyframes.")
+            return
+        }
+
+        isImportingLiveAnnotations = true
+        liveAnnotationStatus = "Adding \(planned.count) live annotation keyframe\(planned.count == 1 ? "" : "s")…"
+        defer {
+            isImportingLiveAnnotations = false
+            liveAnnotationStatus = nil
+            if pendingDiscard {
+                pendingDiscard = false
+                NativeRecordingTempStore.remove(output.directory)
+            }
+        }
+
+        let asset = AVURLAsset(url: output.movieURL)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(
+            width: CGFloat(imageWidth),
+            height: CGFloat(imageHeight)
+        )
+        let tolerance = CMTime(value: 1, timescale: 60)
+        generator.requestedTimeToleranceBefore = tolerance
+        generator.requestedTimeToleranceAfter = tolerance
+
+        for candidate in planned {
+            guard !discarded else { return }
+            do {
+                let frame = try await extractLiveFrame(
+                    atMilliseconds: candidate.atMilliseconds,
+                    generator: generator
+                )
+                guard !discarded else { return }
+                guard let pngData = Self.pngData(
+                    from: frame,
+                    width: imageWidth,
+                    height: imageHeight
+                ), let image = NSImage(data: pngData)
+                else {
+                    throw NativeRecordingDraftError.frameEncodingFailed
+                }
+                moments.append(
+                    NativeRecordingMomentDraft(
+                        atMs: candidate.atMilliseconds,
+                        pngData: pngData,
+                        image: image,
+                        annotations: candidate.annotations
+                    )
+                )
+            } catch {
+                warnings.append(
+                    "Live annotation at \(Self.timeText(candidate.atMilliseconds)) could not be added: \(error.localizedDescription)"
+                )
+            }
+        }
+        moments.sort { $0.atMs < $1.atMs }
+    }
+
+    private func extractLiveFrame(
+        atMilliseconds milliseconds: Int,
+        generator: AVAssetImageGenerator
+    ) async throws -> CGImage {
+        let requested = CMTime(value: CMTimeValue(milliseconds), timescale: 1_000)
+        do {
+            return try await generator.image(at: requested).image
+        } catch {
+            // A keyframe exactly at the recording edge can be unavailable.
+            // Retry slightly earlier before surfacing the failure.
+            guard milliseconds > 100 else { throw error }
+            let fallback = CMTime(
+                value: CMTimeValue(milliseconds - 100),
+                timescale: 1_000
+            )
+            return try await generator.image(at: fallback).image
         }
     }
 
@@ -370,7 +475,13 @@ final class NativeRecordingDraft: ObservableObject {
         }
         cancellables.removeAll()
         player.replaceCurrentItem(with: nil)
-        NativeRecordingTempStore.remove(output.directory)
+        if isImportingLiveAnnotations {
+            // Let the in-flight AVAssetImageGenerator finish reading before the
+            // movie is removed; the import's defer removes the directory.
+            pendingDiscard = true
+        } else {
+            NativeRecordingTempStore.remove(output.directory)
+        }
     }
 
     nonisolated static func timeText(_ milliseconds: Int) -> String {
@@ -395,6 +506,41 @@ final class NativeRecordingDraft: ObservableObject {
     private static func pngData(from image: CGImage) -> Data? {
         let bitmap = NSBitmapImageRep(cgImage: image)
         return bitmap.representation(using: .png, properties: [:])
+    }
+
+    /// The bundle requires every moment to match the poster's exact pixel
+    /// dimensions. Resize only when AVFoundation returns a slightly different
+    /// frame size than the poster.
+    private static func pngData(from image: CGImage, width: Int, height: Int) -> Data? {
+        guard width > 0, height > 0 else { return nil }
+        if image.width == width, image.height == height {
+            return pngData(from: image)
+        }
+
+        let colorSpace = image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+        context.interpolationQuality = .high
+        context.draw(
+            image,
+            in: CGRect(
+                x: 0,
+                y: 0,
+                width: CGFloat(width),
+                height: CGFloat(height)
+            )
+        )
+        guard let scaled = context.makeImage() else { return nil }
+        return pngData(from: scaled)
     }
 
     private func installPlaybackObservers() {

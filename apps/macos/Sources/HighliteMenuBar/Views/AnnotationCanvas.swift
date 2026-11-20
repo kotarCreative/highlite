@@ -9,28 +9,51 @@ struct AnnotationToolbar: View {
     let annotations: [NativeCaptureAnnotation]
     let onUndo: () -> Void
     let onClear: () -> Void
+    /// The recording frame pane is narrow, so it uses icon-only tools while
+    /// keeping the same four annotation kinds and undo/clear actions.
+    var compact = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: compact ? 4 : 8) {
             ForEach(NativeCaptureAnnotationKind.allCases, id: \.self) { kind in
                 toolButton(kind)
             }
-            Spacer(minLength: 12)
-            Text(
-                annotations.isEmpty
-                    ? "No annotations yet"
-                    : "\(annotations.count) annotation\(annotations.count == 1 ? "" : "s")"
-            )
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(DashboardTheme.muted)
-            Button("Undo", action: onUndo)
-                .buttonStyle(.link)
-                .disabled(annotations.isEmpty)
-                .help("Removes the most recent annotation")
-            Button("Clear", action: onClear)
-                .buttonStyle(.link)
-                .disabled(annotations.isEmpty)
-                .help("Removes every annotation")
+            Spacer(minLength: compact ? 4 : 12)
+            if compact {
+                if !annotations.isEmpty {
+                    Text("\(annotations.count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(DashboardTheme.muted)
+                }
+                compactActionButton(
+                    "arrow.uturn.backward",
+                    help: "Removes the most recent annotation",
+                    isDisabled: annotations.isEmpty,
+                    action: onUndo
+                )
+                compactActionButton(
+                    "trash",
+                    help: "Removes every annotation",
+                    isDisabled: annotations.isEmpty,
+                    action: onClear
+                )
+            } else {
+                Text(
+                    annotations.isEmpty
+                        ? "No annotations yet"
+                        : "\(annotations.count) annotation\(annotations.count == 1 ? "" : "s")"
+                )
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(DashboardTheme.muted)
+                Button("Undo", action: onUndo)
+                    .buttonStyle(.link)
+                    .disabled(annotations.isEmpty)
+                    .help("Removes the most recent annotation")
+                Button("Clear", action: onClear)
+                    .buttonStyle(.link)
+                    .disabled(annotations.isEmpty)
+                    .help("Removes every annotation")
+            }
         }
     }
 
@@ -39,29 +62,63 @@ struct AnnotationToolbar: View {
         return Button {
             selectedTool = kind
         } label: {
-            Label(kind.title, systemImage: kind.systemImage)
-                .font(.callout.weight(.medium))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .foregroundStyle(isSelected ? DashboardTheme.actionInk : DashboardTheme.ink)
-                .background(
-                    RoundedRectangle(cornerRadius: DashboardStyle.controlCornerRadius)
-                        .fill(isSelected ? DashboardTheme.action : DashboardTheme.neutralSoft)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: DashboardStyle.controlCornerRadius)
-                        .strokeBorder(
-                            isSelected
-                                ? DashboardTheme.actionInk.opacity(0.8)
-                                : DashboardTheme.lineStrong,
-                            lineWidth: 1
-                        )
+            Group {
+                if compact {
+                    Image(systemName: kind.systemImage)
+                } else {
+                    Label(kind.title, systemImage: kind.systemImage)
                 }
+            }
+            .font(
+                compact
+                    ? Font.system(size: 12, weight: .semibold)
+                    : Font.callout.weight(.medium)
+            )
+            .frame(
+                width: compact ? CGFloat(26) : nil,
+                height: compact ? CGFloat(24) : nil
+            )
+            .padding(.horizontal, compact ? 0 : 10)
+            .padding(.vertical, compact ? 0 : 6)
+            .foregroundStyle(isSelected ? DashboardTheme.actionInk : DashboardTheme.ink)
+            .background(
+                RoundedRectangle(cornerRadius: DashboardStyle.controlCornerRadius)
+                    .fill(isSelected ? DashboardTheme.action : DashboardTheme.neutralSoft)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: DashboardStyle.controlCornerRadius)
+                    .strokeBorder(
+                        isSelected
+                            ? DashboardTheme.actionInk.opacity(0.8)
+                            : DashboardTheme.lineStrong,
+                        lineWidth: 1
+                    )
+            }
         }
         .buttonStyle(.plain)
         .help(kind.help)
         .accessibilityLabel(kind.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func compactActionButton(
+        _ systemName: String,
+        help: String,
+        isDisabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 24, height: 24)
+                .foregroundStyle(
+                    isDisabled ? DashboardTheme.muted.opacity(0.5) : DashboardTheme.ink
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 

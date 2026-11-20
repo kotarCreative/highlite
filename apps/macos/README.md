@@ -216,9 +216,10 @@ poll the screen, inspect the focused window, or request Accessibility access.
 The item is enabled only while the relay is running and an ingest token is
 available.
 
-After the selection, a native review window shows the exact PNG. Use the browser
-SDK's freehand, circle, arrow, and highlight tools to add any number of
-annotations, with **Undo** and **Clear** for revisions. Add a note, then choose
+After the selection, a native review window shows the exact PNG. The browser
+SDK's freehand, circle, arrow, and highlight tools sit in a bar directly beneath
+the image, at the bottom of the capture area, with **Undo** and **Clear** for
+revisions. Add any number of annotations, add a note, then choose
 **Save to Highlite**. The app builds the canonical `manifest.json` plus
 `capture.png` ZIP in a private temporary directory and POSTs it to the relay's
 existing local `/v1/sessions` ingest endpoint with the stored ingest token. It
@@ -244,28 +245,34 @@ dependency, or system-audio capture. Microphone permission is managed by macOS
 in **System Settings → Privacy & Security → Microphone** and is explained by
 `NSMicrophoneUsageDescription` in `Info.plist`.
 
-While recording, the menu bar shows a red **● REC** indicator. The same status
-menu exposes **Stop Recording**; no dashboard window needs to stay open. The
-recorder also stops itself at a 45-second or 48-MiB budget, then opens the same
-review. Stopping finalizes the MP4, closes the share, and opens a native review
-window with:
+While recording, the menu bar shows a red **● REC** indicator, and a floating
+annotation bar appears at the bottom of the chosen window or display. The bar
+contains the live elapsed time, an **Annotate** toggle, the four browser tools,
+**Undo**, **Clear**, and **Stop**. Until **Annotate** is chosen, the transparent
+drawing surface ignores the pointer so the recorded app keeps normal click and
+drag behavior. Choose **Annotate**, draw, then **Done** to return to normal
+interaction. The same status menu also exposes **Stop Recording**; no dashboard
+window needs to stay open. The recorder stops itself at a 45-second or 48-MiB
+budget, then opens the same review. Stopping finalizes the MP4, closes the
+share, and opens a native review window with:
 
 - AVKit playback of the movie, with pause and scrub controls;
+- live strokes already added as annotated keyframes at the moments they were
+  drawn, merged into the compiler's half-second keyframe budget;
 - **Add frame from playhead**, which captures the current video frame as its
   own keyframe, at least half a second from the poster and any other captured
   frame;
-- the browser SDK's freehand, circle, arrow, and highlight tools on the poster
-  and on every captured frame, with **Undo** and **Clear**;
+- the browser SDK's freehand, circle, arrow, and highlight tools in a bar at the
+  bottom of the poster and of every captured frame, with **Undo** and **Clear**;
 - a required note that becomes the session title and target label; and
 - an explicit **Save to Highlite** action.
 
 The app builds a ZIP containing `manifest.json`, `poster.png`, one
-`moment-NNN.png` per captured frame, `recording.mp4`, and, only when the
+`moment-NNN.png` per live or reviewed frame, `recording.mp4`, and, only when the
 microphone was enabled, `recording.m4a`. The poster is the first keyframe at
-0 ms; each captured frame is an additional keyframe at its reviewed timestamp.
-Annotation happens in review rather than as a live overlay in the captured
-window, but the manifest keeps the same keyframe-and-annotation model as the
-browser toolbar. The manifest names the media additively through
+0 ms; each live or reviewed frame is an additional keyframe at its timestamp.
+The manifest keeps the same keyframe-and-annotation model as the browser
+toolbar. The manifest names the media additively through
 `artifacts.video = "recording.mp4"` and optional `artifacts.audio`. Annotations
 stay as normalized geometry and are attached to the frame they were drawn on,
 so the canonical compiler remains the only annotation renderer. It is POSTed to
@@ -273,6 +280,14 @@ the relay's existing local `/v1/sessions` ingest endpoint with the stored ingest
 token. The app itself does not launch Jira, OpenCode, or a provider action;
 configured relay recipes may react to the new session exactly as they do for any
 other capture.
+
+The floating bar and drawing surface set `sharingType = .none` to request
+exclusion from captures. macOS treats that as a legacy hint and ScreenCaptureKit
+may still capture them in a display recording, so the saved keyframes are the
+authoritative annotation record. In a window-only recording they are not part of
+the captured window and do not appear in the movie. The live overlay supports
+the picker's one-display and one-window modes, not multi-window or application
+mode.
 
 Only one screen flow can be active at a time: the still-capture picker, its
 review window, recording setup, the active recording, and recording review are
@@ -398,6 +413,7 @@ owned-child cleanup, CLI path resolution, `server.info` probing, bundled/dev
 relay lookup, native still-capture manifest shape, native recording manifest
 shape with and without microphone audio, additive video/audio ZIP entries,
 recording-controller serialization and automatic-finish handoff,
+live-annotation keyframe planning and duplicate-frame merging,
 launch-time and dismiss-time temporary-directory cleanup, stored-ZIP
 compatibility, ingest token/headers, and input validation. `crates/highlite-compiler` also compiles
 the same committed native-capture manifest and PNG fixture with the canonical

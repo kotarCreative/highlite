@@ -15,7 +15,6 @@ struct CaptureReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            toolBar
             preview
             noteEditor
             if let errorMessage {
@@ -51,28 +50,38 @@ struct CaptureReviewView: View {
         }
     }
 
-    private var toolBar: some View {
-        AnnotationToolbar(
-            selectedTool: $draft.selectedTool,
-            annotations: draft.annotations,
-            onUndo: draft.undoLastAnnotation,
-            onClear: draft.clearAnnotations
-        )
-    }
-
     private var preview: some View {
-        AnnotationCanvas(
-            image: draft.image,
-            imageWidth: draft.imageWidth,
-            imageHeight: draft.imageHeight,
-            annotations: draft.annotations,
-            selectedTool: draft.selectedTool,
-            accessibilityLabel: "Captured screen image",
-            accessibilityHint: "Drag to draw with the selected annotation tool",
-            canDraw: draft.annotations.count < NativeCaptureBundleBuilder.maximumAnnotationCount,
-            onAddAnnotation: { draft.addAnnotation($0) }
-        )
-        .frame(minHeight: 340, maxHeight: .infinity)
+        VStack(spacing: 8) {
+            AnnotationCanvas(
+                image: draft.image,
+                imageWidth: draft.imageWidth,
+                imageHeight: draft.imageHeight,
+                annotations: draft.annotations,
+                selectedTool: draft.selectedTool,
+                accessibilityLabel: "Captured screen image",
+                accessibilityHint: "Drag to draw with the selected annotation tool",
+                canDraw: draft.annotations.count < NativeCaptureBundleBuilder.maximumAnnotationCount,
+                onAddAnnotation: { draft.addAnnotation($0) }
+            )
+            .frame(minHeight: 300, maxHeight: .infinity)
+
+            AnnotationToolbar(
+                selectedTool: $draft.selectedTool,
+                annotations: draft.annotations,
+                onUndo: draft.undoLastAnnotation,
+                onClear: draft.clearAnnotations
+            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                DashboardTheme.neutralSoft.opacity(0.55),
+                in: RoundedRectangle(cornerRadius: DashboardStyle.controlCornerRadius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: DashboardStyle.controlCornerRadius)
+                    .strokeBorder(DashboardTheme.lineStrong, lineWidth: 1)
+            }
+        }
     }
 
     private var noteEditor: some View {
