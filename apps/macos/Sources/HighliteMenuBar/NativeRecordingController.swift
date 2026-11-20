@@ -46,8 +46,12 @@ protocol NativeScreenRecording: AnyObject {
 final class NativeRecordingServiceAdapter: NativeScreenRecording {
     private let service: NativeRecordingService
 
-    init(service: NativeRecordingService = NativeRecordingService()) {
-        self.service = service
+    init(service: NativeRecordingService? = nil) {
+        // Construct the service in the main-actor-isolated initializer body.
+        // A `NativeRecordingService()` default argument would be evaluated in
+        // a synchronous nonisolated context, which Swift rejects because the
+        // service's initializer is main-actor isolated.
+        self.service = service ?? NativeRecordingService()
     }
 
     var statePublisher: AnyPublisher<NativeRecordingState, Never> {
