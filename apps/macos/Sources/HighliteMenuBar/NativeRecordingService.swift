@@ -3,6 +3,7 @@ import Combine
 import CoreGraphics
 import CoreMedia
 import Foundation
+import HighliteMenuBarCore
 import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
@@ -41,8 +42,11 @@ public enum NativeRecordingLimits {
     public static let progressIntervalSeconds: TimeInterval = 0.5
     /// How long to wait for `recordingOutputDidStartRecording`.
     public static let startTimeoutSeconds: TimeInterval = 8
-    /// How long to wait for `recordingOutputDidFinishRecording` after stop.
+    /// How long to wait for the finalized movie to become readable after stop.
     public static let finishTimeoutSeconds: TimeInterval = 15
+    /// How often to probe the finalized movie when the finish notification is
+    /// late or never arrives.
+    public static let finalizationPollIntervalSeconds: TimeInterval = 0.1
     /// How long cancel waits for the muxer to release its file.
     public static let cancellationDrainTimeoutSeconds: TimeInterval = 5
 }
@@ -149,7 +153,7 @@ public struct NativeRecordingResult: Sendable {
     /// Private (mode 0700) directory containing every artifact below.
     public let directoryURL: URL
     /// H.264 MP4 written by `SCRecordingOutput`. This URL is only published
-    /// after the recorder's finish callback has fired.
+    /// after the movie on disk is readable by AVFoundation.
     public let movieURL: URL
     /// Separate AAC/M4A narration track extracted from the movie when present.
     public let audioURL: URL?
@@ -217,8 +221,8 @@ public extension NativeRecordingServiceDelegate {
 /// 1. `start(includeMicrophone:)` presents the picker and returns after capture
 ///    has actually started.
 /// 2. Progress arrives through `progress` or the delegate.
-/// 3. `stop()` finalizes the movie and returns artifacts once the recorder's
-///    finish callback has fired.
+/// 3. `stop()` finalizes the movie and returns artifacts once the file on disk
+///    is stable and readable; the finish callback is not required.
 /// 4. `cancel()` tears down capture and deletes the private temporary directory.
 ///
 /// The service has no global event monitors. It only registers a picker
@@ -329,8 +333,8 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         }
     }
 
-    /// Stops capture. The returned movie is only available after the recorder
-    /// reports that it finished writing the MP4.
+    /// Stops capture. The returned movie is only available after the finalized
+    /// MP4 on disk is stable and readable by AVFoundation.
     public func stop() async throws -> NativeRecordingResult {
         if state == .finished, let lastResult {
             return lastResult
@@ -512,7 +516,10 @@ public final class NativeRecordingService: NSObject, ObservableObject {
             configuration.captureMicrophone = false
         }
 
-        let movieURL = directory.appendingPathComponent("recording.mp4", isDirectory: false)
+        let movieURL = directory.appendingPathComponent(
+            NativeRecordingFile.movieFileName,
+            isDirectory: false
+        )
         let recordingConfiguration = SCRecordingOutputConfiguration()
         recordingConfiguration.outputURL = movieURL
         recordingConfiguration.outputFileType = .mp4
@@ -646,51 +653,54 @@ public final class NativeRecordingService: NSObject, ObservableObject {
             throw NativeRecordingError.temporaryDirectoryFailed("No workspace is available.")
         }
 
+        let movieURL = directory.appendingPathComponent(
+            NativeRecordingFile.movieFileName,
+            isDirectory: false
+        )
         let reportedDuration = recordingOutput
             .map { CMTimeGetSeconds($0.recordedDuration) } ?? 0
 
         var stopFailureDescription: String?
-        if streamStoppedBySystem, !recordingDidFinish {
-            // A system stop usually finalizes the recorder on its own. Asking
-            // SCK to remove the output is a best-effort nudge for the cases
-            // where the finish callback is late.
-            if let stream = stream, let recordingOutput = recordingOutput {
+        if streamStoppedBySystem {
+            // The stream already stopped on its own. Ask the recorder to
+            // release the file handle, but treat that as best effort: the
+            // movie on disk is the source of truth.
+            if !recordingDidFinish,
+               let stream = stream,
+               let recordingOutput = recordingOutput {
                 try? stream.removeRecordingOutput(recordingOutput)
             }
-        }
-        if let stream = stream, !streamStoppedBySystem {
+        } else if let stream = stream {
             do {
                 try await stream.stopCapture()
             } catch {
-                // A system stop can make this call fail after the movie is
-                // already complete. The finish callback is authoritative.
-                stopFailureDescription = error.localizedDescription
+                // The stream can already be torn down even when no system
+                // stop was observed. Do not surface the framework error here;
+                // it may be malformed, and the file is authoritative.
+                stopFailureDescription = "The capture stream did not stop cleanly."
             }
         }
 
-        if streamStoppedBySystem, !recordingDidFinish {
-            // The stream may have stopped between the two checks above.
-            if let stream = stream, let recordingOutput = recordingOutput {
-                try? stream.removeRecordingOutput(recordingOutput)
-            }
-        }
-
-        try await waitForRecordingFinish(
-            timeout: NativeRecordingLimits.finishTimeoutSeconds
-        )
-
+        // Detach the capture objects before touching the file. A second
+        // `stopCapture()` from failure teardown is a suspected crash path
+        // inside ScreenCaptureKit when the finish notification is late.
         stream = nil
         recordingOutput = nil
         monitorTask?.cancel()
         monitorTask = nil
 
-        let movieURL = directory.appendingPathComponent("recording.mp4", isDirectory: false)
+        // `stopCapture()` asks the recorder to finish. The MP4 is normally
+        // written by the time it returns, but the
+        // `recordingOutputDidFinishRecording` notification may be delayed or
+        // absent. Wait for a stable, finalized file instead of blocking on
+        // that callback.
+        let asset = try await waitForFinalizedMovie(at: movieURL)
+
         let fileSize = try movieFileSize(at: movieURL)
         guard fileSize < NativeRecordingLimits.maximumMovieBytes else {
             throw NativeRecordingError.movieTooLarge(actualBytes: fileSize)
         }
 
-        let asset = AVURLAsset(url: movieURL)
         let duration = try await asset.load(.duration)
         let durationSeconds = CMTimeGetSeconds(duration)
         let wallSeconds = recordingStartDate.map { Date().timeIntervalSince($0) } ?? 0
@@ -807,6 +817,45 @@ public final class NativeRecordingService: NSObject, ObservableObject {
                 }
                 self?.handleFinishTimeout()
             }
+        }
+    }
+
+    /// Waits until the finalized movie is on disk and AVFoundation can open
+    /// its container, then returns that asset. This deliberately does not wait
+    /// for `recordingOutputDidFinishRecording`, which may be delayed or skipped
+    /// after `stopCapture()` even when the file was written successfully.
+    private func waitForFinalizedMovie(at url: URL) async throws -> AVURLAsset {
+        let deadline = Date().addingTimeInterval(
+            NativeRecordingLimits.finishTimeoutSeconds
+        )
+        var previousSize: Int64 = -1
+
+        while true {
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+            let size = Int64(values?.fileSize ?? 0)
+
+            if NativeRecordingFile.looksLikeFinalizedMovie(at: url),
+               size > 0,
+               size == previousSize {
+                // The header and a stable size are necessary but not
+                // sufficient: confirm AVFoundation can open the container.
+                let asset = AVURLAsset(url: url)
+                if let isPlayable = try? await asset.load(.isPlayable), isPlayable {
+                    return asset
+                }
+            }
+
+            previousSize = size
+
+            if Date() >= deadline {
+                throw NativeRecordingError.finishTimedOut
+            }
+            try await Task.sleep(
+                nanoseconds: UInt64(
+                    NativeRecordingLimits.finalizationPollIntervalSeconds
+                        * 1_000_000_000
+                )
+            )
         }
     }
 
@@ -989,20 +1038,21 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         }
     }
 
-    private func handleRecordingFailure(
-        _ output: SCRecordingOutput,
-        error: Error
-    ) {
+    private func handleRecordingFailure(_ output: SCRecordingOutput) {
         guard output === recordingOutput else {
             return
         }
 
-        recordingFailure = error
+        // Do not dereference the framework's error. A malformed NSError at
+        // ScreenCaptureKit teardown is a suspected crash source, so avoid
+        // touching it before app code can surface anything. When a stop is
+        // already underway, the file-on-disk path remains the source of truth.
+        let recordingError = NativeRecordingError.recordingFailed(
+            "The screen recorder reported a failure."
+        )
+        recordingFailure = recordingError
         finishTimeoutTask?.cancel()
         finishTimeoutTask = nil
-        let recordingError = NativeRecordingError.recordingFailed(
-            error.localizedDescription
-        )
 
         if let finishContinuation = finishContinuation {
             self.finishContinuation = nil
@@ -1020,27 +1070,28 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         }
     }
 
-    private func handleStreamStopped(_ stoppedStream: SCStream, error: Error) {
+    private func handleStreamStopped(_ stoppedStream: SCStream) {
         guard stoppedStream === stream else {
             return
         }
 
         streamStoppedBySystem = true
+        let stopMessage = "macOS ended the capture."
 
         switch state {
         case .recording:
-            pendingStopWarning = error.localizedDescription
+            pendingStopWarning = stopMessage
             _ = beginFinalization(reason: .screenCaptureStopped)
         case .preparing:
             if let startContinuation = startContinuation {
                 self.startContinuation = nil
                 startContinuation.resume(
-                    throwing: NativeRecordingError.recordingStopped(error.localizedDescription)
+                    throwing: NativeRecordingError.recordingStopped(stopMessage)
                 )
             }
             Task { @MainActor [weak self] in
                 await self?.failSession(
-                    NativeRecordingError.recordingStopped(error.localizedDescription)
+                    NativeRecordingError.recordingStopped(stopMessage)
                 )
             }
         case .idle, .choosingContent, .stopping, .cancelling, .finished, .failed:
@@ -1383,8 +1434,11 @@ extension NativeRecordingService: SCRecordingOutputDelegate {
         _ recordingOutput: SCRecordingOutput,
         didFailWithError error: Error
     ) {
+        // `error` is intentionally not captured or inspected. See
+        // `handleRecordingFailure` for the suspected ScreenCaptureKit
+        // teardown issue.
         Task { @MainActor [weak self] in
-            self?.handleRecordingFailure(recordingOutput, error: error)
+            self?.handleRecordingFailure(recordingOutput)
         }
     }
 
@@ -1402,8 +1456,10 @@ extension NativeRecordingService: SCRecordingOutputDelegate {
 @available(macOS 15.0, *)
 extension NativeRecordingService: SCStreamDelegate {
     public nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
+        // Do not capture `error`: dereferencing a malformed ScreenCaptureKit
+        // NSError at stream teardown is a suspected crash path.
         Task { @MainActor [weak self] in
-            self?.handleStreamStopped(stream, error: error)
+            self?.handleStreamStopped(stream)
         }
     }
 }
