@@ -102,6 +102,8 @@ require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeCaptureAnnotation.swift
 require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeCaptureBundle.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeCaptureCommand.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeRecordingBundle.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeRecordingFile.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeRecordingLifecycle.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeRecordingTempStore.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBar/HighliteMenuBarApp.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBar/AppDelegate.swift"

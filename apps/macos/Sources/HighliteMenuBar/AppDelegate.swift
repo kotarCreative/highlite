@@ -550,17 +550,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     private func closeRecordingReviewWindow() {
-        recordingDraft?.discard()
+        let draft = recordingDraft
+        let window = recordingReviewWindow
         recordingDraft = nil
-        recordingController.finishReview()
-        guard let window = recordingReviewWindow else {
-            updateChrome()
-            return
-        }
         recordingReviewWindow = nil
-        window.delegate = nil
-        window.close()
+
+        // Stop playback before AppKit tears the AVKit view down, then release
+        // the player and its time observer on the next main-actor turn. Doing
+        // that inside `windowWillClose` mutates the player while SwiftUI is
+        // still dismantling the view that owns it.
+        draft?.pause()
+        window?.delegate = nil
+        window?.close()
+        recordingController.finishReview()
         updateChrome()
+
+        if let draft {
+            Task { @MainActor in
+                draft.discard()
+            }
+        }
     }
 
     private func showDashboard() {
@@ -620,11 +629,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             recordingSetupWindow = nil
             updateChrome()
         } else if window === recordingReviewWindow {
+            let draft = recordingDraft
             recordingReviewWindow = nil
-            recordingDraft?.discard()
             recordingDraft = nil
+            draft?.pause()
             recordingController.finishReview()
             updateChrome()
+            if let draft {
+                // The window is still closing while this delegate method runs.
+                // Release the AVPlayer and delete its files only after AppKit
+                // has finished dismantling the AVKit view.
+                Task { @MainActor in
+                    draft.discard()
+                }
+            }
         } else if window === dashboardWindow {
             dashboardWindow = nil
         }

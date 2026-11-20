@@ -49,6 +49,12 @@ public enum NativeRecordingLimits {
     public static let finalizationPollIntervalSeconds: TimeInterval = 0.1
     /// How long cancel waits for the muxer to release its file.
     public static let cancellationDrainTimeoutSeconds: TimeInterval = 5
+    /// How long a stopped stream and recording output stay retained after a
+    /// session ends. ScreenCaptureKit can deliver its terminal delegate
+    /// callbacks after `stopCapture()` returns; releasing the objects first
+    /// would leave the framework holding freed objects. The grace period is
+    /// bounded so a stopped capture does not live for the rest of the process.
+    public static let captureRetirementSeconds: TimeInterval = 15
 }
 
 public enum NativeRecordingError: LocalizedError, Equatable {
@@ -222,7 +228,9 @@ public extension NativeRecordingServiceDelegate {
 ///    has actually started.
 /// 2. Progress arrives through `progress` or the delegate.
 /// 3. `stop()` finalizes the movie and returns artifacts once the file on disk
-///    is stable and readable; the finish callback is not required.
+///    is stable and readable; the finish callback is not required. The stopped
+///    stream and recording output stay retained briefly so late framework
+///    callbacks never target deallocated objects.
 /// 4. `cancel()` tears down capture and deletes the private temporary directory.
 ///
 /// The service has no global event monitors. It only registers a picker
@@ -254,9 +262,19 @@ public final class NativeRecordingService: NSObject, ObservableObject {
     /// actor and are not dropped while the service is alive.
     public weak var delegate: (any NativeRecordingServiceDelegate)?
 
+    /// A stopped capture pair kept alive briefly for ScreenCaptureKit's late
+    /// delegate callbacks. The service owns these references, not the stream.
+    private struct RetiredCapture {
+        let id: UUID
+        let stream: SCStream
+        let recordingOutput: SCRecordingOutput
+    }
+
     private let picker = SCContentSharingPicker.shared
     private var stream: SCStream?
     private var recordingOutput: SCRecordingOutput?
+    private var retiredCaptures: [RetiredCapture] = []
+    private var stopGate = NativeRecordingStopGate()
     private var workingDirectory: URL?
     private var finalizationTask: Task<NativeRecordingResult, Error>?
 
@@ -405,12 +423,10 @@ public final class NativeRecordingService: NSObject, ObservableObject {
                     timeout: NativeRecordingLimits.cancellationDrainTimeoutSeconds
                 )
             }
-            releaseCaptureObjects()
+            retireCaptureObjects()
             cleanupWorkingDirectory()
         }
 
-        stream = nil
-        recordingOutput = nil
         state = .idle
         progress = .zero
         lastResult = nil
@@ -539,6 +555,7 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         // start/failure callbacks while `startCapture()` is still suspended.
         self.recordingOutput = recordingOutput
         self.stream = stream
+        stopGate.reset()
 
         do {
             try stream.addRecordingOutput(recordingOutput)
@@ -670,7 +687,14 @@ public final class NativeRecordingService: NSObject, ObservableObject {
                let recordingOutput = recordingOutput {
                 try? stream.removeRecordingOutput(recordingOutput)
             }
-        } else if let stream = stream {
+        } else if !recordingDidFinish,
+                  let stream = stream,
+                  stopGate.beginStop(streamAlreadyStopped: false) {
+            // A natural finish already stopped the recorder; asking the stream
+            // to stop again would be a redundant teardown. The gate makes this
+            // the only `stopCapture()` in the session, so failure or
+            // cancellation teardown cannot start a second stop while this one
+            // is still finishing.
             do {
                 try await stream.stopCapture()
             } catch {
@@ -681,11 +705,11 @@ public final class NativeRecordingService: NSObject, ObservableObject {
             }
         }
 
-        // Detach the capture objects before touching the file. A second
-        // `stopCapture()` from failure teardown is a suspected crash path
-        // inside ScreenCaptureKit when the finish notification is late.
-        stream = nil
-        recordingOutput = nil
+        // Keep the stream and recording output alive while the movie is
+        // finalized. ScreenCaptureKit can deliver its terminal callbacks after
+        // `stopCapture()` returns, and releasing the objects first would leave
+        // the framework with freed objects. They are retired below, after the
+        // file is usable, and then held for a bounded grace period.
         monitorTask?.cancel()
         monitorTask = nil
 
@@ -775,6 +799,8 @@ public final class NativeRecordingService: NSObject, ObservableObject {
             warnings: warnings
         )
 
+        retireCaptureObjects()
+
         workingDirectory = nil
         lastResult = result
         lastError = nil
@@ -828,15 +854,15 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         let deadline = Date().addingTimeInterval(
             NativeRecordingLimits.finishTimeoutSeconds
         )
-        var previousSize: Int64 = -1
+        var stability = NativeRecordingFileStability()
 
         while true {
             let values = try? url.resourceValues(forKeys: [.fileSizeKey])
             let size = Int64(values?.fileSize ?? 0)
+            let isStable = stability.observe(fileSize: size)
 
-            if NativeRecordingFile.looksLikeFinalizedMovie(at: url),
-               size > 0,
-               size == previousSize {
+            if isStable,
+               NativeRecordingFile.looksLikeFinalizedMovie(at: url) {
                 // The header and a stable size are necessary but not
                 // sufficient: confirm AVFoundation can open the container.
                 let asset = AVURLAsset(url: url)
@@ -844,8 +870,6 @@ public final class NativeRecordingService: NSObject, ObservableObject {
                     return asset
                 }
             }
-
-            previousSize = size
 
             if Date() >= deadline {
                 throw NativeRecordingError.finishTimedOut
@@ -1202,15 +1226,48 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         finishTimeoutTask = nil
     }
 
+    /// Stops the stream once for failure or cancellation teardown. If the
+    /// finalization path already asked it to stop, this is a no-op.
     private func stopStreamForCleanup() async {
-        if let stream = stream, !streamStoppedBySystem {
-            try? await stream.stopCapture()
+        guard !streamStoppedBySystem,
+              let stream = stream,
+              stopGate.beginStop(streamAlreadyStopped: false)
+        else {
+            return
         }
+        try? await stream.stopCapture()
     }
 
-    private func releaseCaptureObjects() {
-        stream = nil
-        recordingOutput = nil
+    /// Moves the capture objects out of the live session without deallocating
+    /// them. ScreenCaptureKit may still deliver `recordingOutputDidFinishRecording`
+    /// or `stream(_:didStopWithError:)` after `stopCapture()` returns, so the
+    /// stopped pair stays strongly referenced for a bounded grace period.
+    private func retireCaptureObjects() {
+        guard let stream = stream, let recordingOutput = recordingOutput else {
+            self.stream = nil
+            self.recordingOutput = nil
+            return
+        }
+
+        self.stream = nil
+        self.recordingOutput = nil
+
+        let retired = RetiredCapture(
+            id: UUID(),
+            stream: stream,
+            recordingOutput: recordingOutput
+        )
+        retiredCaptures.append(retired)
+
+        let retiredID = retired.id
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(
+                nanoseconds: UInt64(
+                    NativeRecordingLimits.captureRetirementSeconds * 1_000_000_000
+                )
+            )
+            self?.retiredCaptures.removeAll { $0.id == retiredID }
+        }
     }
 
     private func failSession(_ error: NativeRecordingError) async {
@@ -1242,7 +1299,7 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         }
 
         await stopStreamForCleanup()
-        releaseCaptureObjects()
+        retireCaptureObjects()
         cleanupWorkingDirectory()
 
         if !failureNotified {
@@ -1282,7 +1339,7 @@ public final class NativeRecordingService: NSObject, ObservableObject {
                 timeout: NativeRecordingLimits.cancellationDrainTimeoutSeconds
             )
         }
-        releaseCaptureObjects()
+        retireCaptureObjects()
         cleanupWorkingDirectory()
 
         state = .idle
@@ -1299,6 +1356,7 @@ public final class NativeRecordingService: NSObject, ObservableObject {
         finishContinuation = nil
         stream = nil
         recordingOutput = nil
+        stopGate.reset()
         workingDirectory = nil
         finalizationTask = nil
 

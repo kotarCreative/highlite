@@ -363,12 +363,12 @@ final class NativeRecordingDraft: ObservableObject {
     func discard() {
         guard !discarded else { return }
         discarded = true
+        player.pause()
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
             self.timeObserver = nil
         }
         cancellables.removeAll()
-        player.pause()
         player.replaceCurrentItem(with: nil)
         NativeRecordingTempStore.remove(output.directory)
     }
@@ -403,7 +403,11 @@ final class NativeRecordingDraft: ObservableObject {
             forInterval: interval,
             queue: .main
         ) { [weak self] time in
-            Task { @MainActor in
+            // The observer queue is the main queue, so this runs on the main
+            // actor's executor. Assume that isolation instead of spawning a
+            // task per tick: out-of-order tasks could update the clock after
+            // the draft was discarded, and they outlive the window teardown.
+            MainActor.assumeIsolated {
                 self?.updatePlaybackClock(time)
             }
         }
@@ -412,14 +416,16 @@ final class NativeRecordingDraft: ObservableObject {
             .publisher(for: .AVPlayerItemDidPlayToEndTime, object: player.currentItem)
             .sink { [weak self] _ in
                 Task { @MainActor in
-                    self?.isPlaying = false
-                    self?.playbackTimeMilliseconds = self?.durationMilliseconds ?? 0
+                    guard let self, !self.discarded else { return }
+                    self.isPlaying = false
+                    self.playbackTimeMilliseconds = self.durationMilliseconds
                 }
             }
             .store(in: &cancellables)
     }
 
     private func updatePlaybackClock(_ time: CMTime) {
+        guard !discarded else { return }
         let seconds = CMTimeGetSeconds(time)
         if seconds.isFinite {
             playbackTimeMilliseconds = max(
