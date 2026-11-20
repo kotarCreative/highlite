@@ -215,21 +215,31 @@ limits the recording to one chosen window or display.
 
 Stopping finalizes an MP4 and opens a native review window. The recorder also stops itself
 at its 45-second or 48-MiB budget and opens the same review. The window plays the movie
-with AVKit, shows the still poster for an optional highlight rectangle, requires a note,
-and uploads only after **Save to Highlite**. The ZIP is additive to the still contract:
+with AVKit, exposes play/pause and a scrubber, and can capture the current frame as its own
+keyframe. The poster and every captured frame use the browser SDK's freehand, circle,
+arrow, and highlight tools with Undo and Clear. A note is required, and the archive is
+uploaded only after **Save to Highlite**. The ZIP is additive to the still contract:
 
 ```text
-manifest.json       durationMs, poster keyframe, target, optional annotation
-poster.png          still poster used as the keyframe image
+manifest.json       durationMs, poster and captured-frame keyframes, target, annotations
+poster.png          still poster used as the first keyframe at 0 ms
+moment-NNN.png      one frame per reviewed moment, when the user captured any
 recording.mp4       full movie
 recording.m4a       only when microphone audio was enabled
 ```
 
 The manifest identifies the media as `artifacts.video = "recording.mp4"` and optional
-`artifacts.audio`. A poster highlight is stored as a normalized annotation and burned
-into the compiled keyframe, matching the still-capture pipeline. The app does not launch
-a downstream Jira, OpenCode, or provider action; configured relay recipes react to the
-ingested session as they do for any capture.
+`artifacts.audio`. Captured frames must be at least half a second from the poster and
+from each other, matching the compiler's duplicate-frame rule, so each reviewed moment
+survives compilation. Annotations
+are stored as normalized geometry, attached to the keyframe they were drawn on, and burned
+into that keyframe by the canonical compiler. Multi-frame manifests give each annotation a
+short fade so it does not bleed into later keyframes. Unlike the browser toolbar, the
+native recorder does not draw a live overlay into the captured window; annotation happens
+in review on the poster and extracted frames, while the resulting manifest keeps the same
+keyframe-and-annotation model as a browser capture. The app does not launch a downstream
+Jira, OpenCode, or provider action; configured relay recipes react to the ingested session
+as they do for any capture.
 
 One screen flow is active at a time. The still-capture picker and review, recording
 setup, active recording, and recording review are mutually exclusive. Saving failure
@@ -343,10 +353,12 @@ After launching from `dist/Highlite.app`:
     session is created.
 11. Choose **Record Screen…**. Confirm microphone audio is off by default. Pick one
     window or display from the system picker and confirm the menu bar shows **● REC**
-    and **Stop Recording**. Stop, play the movie in the review window, mark the poster,
-    enter a note, and save. Confirm the new session and a bundle whose manifest names
-    `recording.mp4` and whose ZIP contains the movie, poster, and manifest. Repeat with
-    the microphone switch on and confirm macOS asks for permission and the ZIP adds
+    and **Stop Recording**. Stop, pause the movie at a moment, choose **Add frame from
+    playhead**, draw with more than one tool, then annotate the poster too. Enter a note
+    and save. Confirm the new session and a bundle whose manifest names `recording.mp4`,
+    lists one `moment-001.png` keyframe in addition to the poster, and whose ZIP contains
+    the movie, both frames, and manifest. Repeat with the microphone switch on and confirm
+    macOS asks for permission and the ZIP adds
     `recording.m4a`. Confirm there is no system-audio track.
 12. With a recording active, confirm **Capture Screen…** and **Record Screen…** cannot
     start a second flow. Cancel a recording review and confirm the temporary

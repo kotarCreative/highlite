@@ -439,6 +439,13 @@ struct ManifestAnnotation: Encodable {
     let points: [ManifestPoint]
     let coordinateSpace: String
     let strokeWidth: Double
+    /// Recording review attaches annotations to individual keyframes. Setting a
+    /// zero-length fade keeps an annotation on its own keyframe without bleeding
+    /// it into every later keyframe, since the compiler treats a missing fade as
+    /// "visible forever". Still captures leave both fields nil for byte-compatible
+    /// manifests.
+    var fadeAfterMs: Int? = nil
+    var fadeDurationMs: Int? = nil
     let targetId: String
 }
 
@@ -469,7 +476,7 @@ struct ManifestArtifacts: Encodable {
 
 // MARK: - ZIP
 
-/// Minimal stored (uncompressed) ZIP writer for the two-file capture archive.
+/// Minimal stored (uncompressed) ZIP writer for native captures and recordings.
 /// PNG is already compressed, so deflating would add code and dependencies for
 /// little benefit. The canonical relay reads this with the standard `zip` crate.
 enum StoredZip {

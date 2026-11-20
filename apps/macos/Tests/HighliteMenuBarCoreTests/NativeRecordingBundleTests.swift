@@ -128,6 +128,273 @@ final class NativeRecordingBundleTests: XCTestCase {
         XCTAssertEqual((manifest["timeline"] as? [[String: Any]])?.count, 0)
     }
 
+    func testRecordingCarriesPosterAndMomentAnnotations() throws {
+        let bundle = try NativeRecordingBundleBuilder.build(
+            movieData: movieFixture(),
+            posterPNGData: try posterFixture(),
+            audioData: audioData,
+            audioFileExtension: "m4a",
+            note: note,
+            annotations: [
+                NativeCaptureAnnotation(kind: .freehand, points: [
+                    NativeCapturePoint(x: 0.10, y: 0.15),
+                    NativeCapturePoint(x: 0.20, y: 0.30),
+                ]),
+                NativeCaptureAnnotation(kind: .highlight, points: [
+                    NativeCapturePoint(x: 0.55, y: 0.65),
+                    NativeCapturePoint(x: 0.90, y: 0.85),
+                ]),
+            ],
+            moments: [
+                NativeRecordingMoment(
+                    atMs: 2_400,
+                    pngData: try posterFixture(),
+                    annotations: [
+                        NativeCaptureAnnotation(kind: .circle, points: [
+                            NativeCapturePoint(x: 0.20, y: 0.20),
+                            NativeCapturePoint(x: 0.50, y: 0.55),
+                        ]),
+                        NativeCaptureAnnotation(kind: .arrow, points: [
+                            NativeCapturePoint(x: 0.15, y: 0.70),
+                            NativeCapturePoint(x: 0.55, y: 0.85),
+                        ]),
+                    ]
+                ),
+                NativeRecordingMoment(
+                    atMs: 5_200,
+                    pngData: try posterFixture(),
+                    annotations: [
+                        NativeCaptureAnnotation(kind: .highlight, points: [
+                            NativeCapturePoint(x: 0.30, y: 0.30),
+                            NativeCapturePoint(x: 0.70, y: 0.60),
+                        ]),
+                    ]
+                ),
+            ],
+            durationMilliseconds: 8_400,
+            createdAt: try createdAt(),
+            sessionId: sessionId
+        )
+
+        XCTAssertEqual(bundle.keyframeCount, 3)
+        let root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: bundle.manifestJSON) as? [String: Any]
+        )
+        let annotations = try XCTUnwrap(root["annotations"] as? [[String: Any]])
+        XCTAssertEqual(
+            annotations.compactMap { $0["kind"] as? String },
+            ["freehand", "highlight", "circle", "arrow", "highlight"]
+        )
+        XCTAssertEqual(
+            annotations.compactMap { $0["id"] as? String },
+            ["native-freehand", "native-highlight", "native-circle", "native-arrow", "native-highlight-2"]
+        )
+        XCTAssertEqual(
+            annotations.compactMap { $0["atMs"] as? Int },
+            [0, 0, 2_400, 2_400, 5_200]
+        )
+        XCTAssertTrue(
+            annotations.allSatisfy {
+                ($0["fadeAfterMs"] as? Int) == 0 && ($0["fadeDurationMs"] as? Int) == 1
+            },
+            "Multi-frame annotations must not bleed into later keyframes"
+        )
+
+        let timeline = try XCTUnwrap(root["timeline"] as? [[String: Any]])
+        XCTAssertEqual(timeline.compactMap { $0["atMs"] as? Int }, [0, 0, 2_400, 2_400, 5_200])
+        XCTAssertEqual(timeline.compactMap { $0["seq"] as? Int }, [0, 1, 2, 3, 4])
+        XCTAssertEqual(
+            timeline.compactMap { $0["id"] as? String },
+            [
+                "native-annotation",
+                "native-annotation-2",
+                "native-annotation-3",
+                "native-annotation-4",
+                "native-annotation-5",
+            ]
+        )
+
+        let keyframes = try XCTUnwrap(root["keyframes"] as? [[String: Any]])
+        XCTAssertEqual(
+            keyframes.compactMap { $0["id"] as? String },
+            ["native-frame", "native-frame-2", "native-frame-3"]
+        )
+        XCTAssertEqual(
+            keyframes.compactMap { $0["imagePath"] as? String },
+            ["poster.png", "moment-001.png", "moment-002.png"]
+        )
+        XCTAssertEqual(keyframes.compactMap { $0["atMs"] as? Int }, [0, 2_400, 5_200])
+        XCTAssertEqual(
+            keyframes.compactMap { $0["annotationIds"] as? [String] },
+            [
+                ["native-freehand", "native-highlight"],
+                ["native-circle", "native-arrow"],
+                ["native-highlight-2"],
+            ]
+        )
+        XCTAssertEqual(
+            keyframes.compactMap { $0["reason"] as? String },
+            ["annotation", "annotation", "annotation"]
+        )
+
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let archive = directory.appendingPathComponent("recording.zip")
+        try bundle.archive.write(to: archive)
+        XCTAssertEqual(
+            try unzipEntries(archive).sorted(),
+            [
+                "manifest.json",
+                "moment-001.png",
+                "moment-002.png",
+                "poster.png",
+                "recording.m4a",
+                "recording.mp4",
+            ]
+        )
+        XCTAssertEqual(try unzip(archive, entry: "moment-001.png"), try posterFixture())
+    }
+
+    func testMomentBudgetTracksCompilerKeyframeBudget() {
+        XCTAssertEqual(
+            NativeRecordingBundleBuilder.maximumMoments(forDurationMilliseconds: 8_400),
+            5
+        )
+        XCTAssertEqual(
+            NativeRecordingBundleBuilder.maximumMoments(forDurationMilliseconds: 45_000),
+            6
+        )
+        XCTAssertEqual(
+            NativeRecordingBundleBuilder.maximumMoments(forDurationMilliseconds: 300_000),
+            NativeRecordingBundleBuilder.maximumMomentCount
+        )
+    }
+
+    func testRecordingMomentCanBeAMarkWithoutAnnotations() throws {
+        let bundle = try NativeRecordingBundleBuilder.build(
+            movieData: movieFixture(),
+            posterPNGData: try posterFixture(),
+            note: note,
+            annotations: [],
+            moments: [
+                NativeRecordingMoment(atMs: 1_000, pngData: try posterFixture()),
+            ],
+            durationMilliseconds: 4_000,
+            createdAt: try createdAt(),
+            sessionId: sessionId
+        )
+        let root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: bundle.manifestJSON) as? [String: Any]
+        )
+        XCTAssertEqual((root["annotations"] as? [[String: Any]])?.count, 0)
+        XCTAssertEqual((root["timeline"] as? [[String: Any]])?.count, 0)
+        let keyframes = try XCTUnwrap(root["keyframes"] as? [[String: Any]])
+        XCTAssertEqual(keyframes.count, 2)
+        XCTAssertEqual(
+            keyframes.compactMap { $0["reason"] as? String },
+            ["mark", "mark"]
+        )
+    }
+
+    func testBuilderRejectsMalformedMoments() throws {
+        let poster = try posterFixture()
+        let movie = movieFixture()
+        let annotation = NativeCaptureAnnotation(kind: .circle, points: [
+            NativeCapturePoint(x: 0.2, y: 0.2),
+            NativeCapturePoint(x: 0.6, y: 0.6),
+        ])
+        // A valid 1×1 PNG whose dimensions differ from the poster.
+        let onePixelPNG = try XCTUnwrap(
+            Data(
+                base64Encoded:
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+            )
+        )
+
+        func build(
+            annotations: [NativeCaptureAnnotation] = [],
+            moments: [NativeRecordingMoment],
+            durationMilliseconds: Int = 8_000
+        ) throws -> NativeRecordingBundle {
+            try NativeRecordingBundleBuilder.build(
+                movieData: movie,
+                posterPNGData: poster,
+                note: note,
+                annotations: annotations,
+                moments: moments,
+                durationMilliseconds: durationMilliseconds,
+                createdAt: try createdAt(),
+                sessionId: sessionId
+            )
+        }
+
+        XCTAssertThrowsError(
+            try build(moments: [NativeRecordingMoment(atMs: 0, pngData: poster)])
+        ) {
+            XCTAssertEqual($0 as? NativeRecordingBundleError, .invalidMoment)
+        }
+        XCTAssertThrowsError(
+            try build(moments: [NativeRecordingMoment(atMs: 100, pngData: poster)])
+        ) {
+            XCTAssertEqual($0 as? NativeRecordingBundleError, .invalidMoment)
+        }
+        XCTAssertThrowsError(
+            try build(moments: [
+                NativeRecordingMoment(atMs: 2_000, pngData: poster),
+                NativeRecordingMoment(atMs: 2_400, pngData: poster),
+            ])
+        ) {
+            XCTAssertEqual($0 as? NativeRecordingBundleError, .invalidMoment)
+        }
+        XCTAssertThrowsError(
+            try build(moments: [NativeRecordingMoment(atMs: 9_000, pngData: poster)])
+        ) {
+            XCTAssertEqual($0 as? NativeRecordingBundleError, .invalidMoment)
+        }
+        XCTAssertThrowsError(
+            try build(moments: [
+                NativeRecordingMoment(atMs: 1_000, pngData: Data("not a png".utf8)),
+            ])
+        ) {
+            XCTAssertEqual($0 as? NativeRecordingBundleError, .invalidMoment)
+        }
+        XCTAssertThrowsError(
+            try build(moments: [NativeRecordingMoment(atMs: 1_000, pngData: onePixelPNG)])
+        ) {
+            XCTAssertEqual($0 as? NativeRecordingBundleError, .invalidMoment)
+        }
+        XCTAssertThrowsError(
+            try build(moments: [
+                NativeRecordingMoment(
+                    atMs: 1_000,
+                    pngData: poster,
+                    annotations: [
+                        NativeCaptureAnnotation(kind: .circle, points: [
+                            NativeCapturePoint(x: 0.9, y: 0.1),
+                            NativeCapturePoint(x: 1.4, y: 0.5),
+                        ])
+                    ]
+                )
+            ])
+        ) {
+            XCTAssertEqual($0 as? NativeRecordingBundleError, .invalidAnnotation)
+        }
+        XCTAssertThrowsError(
+            try build(
+                moments: (0..<(NativeRecordingBundleBuilder.maximumMomentCount + 1)).map { index in
+                    NativeRecordingMoment(
+                        atMs: (index + 1) * NativeRecordingBundleBuilder.minimumMomentGapMilliseconds,
+                        pngData: poster,
+                        annotations: [annotation]
+                    )
+                }
+            )
+        ) {
+            XCTAssertEqual($0 as? NativeRecordingBundleError, .invalidMoment)
+        }
+    }
+
+
     func testBuilderRejectsMalformedRecordings() throws {
         let poster = try posterFixture()
         let movie = movieFixture()

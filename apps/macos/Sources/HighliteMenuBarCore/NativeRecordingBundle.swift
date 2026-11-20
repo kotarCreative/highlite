@@ -4,10 +4,11 @@ import Foundation
 /// ingest endpoint.
 ///
 /// The archive is additive to the still-capture contract: `manifest.json`,
-/// `poster.png`, `recording.mp4`, and optionally `recording.<audio-extension>`.
-/// The manifest names the movie and audio through `artifacts.video` and
-/// `artifacts.audio`; the canonical compiler treats the poster as the keyframe
-/// image exactly as it does for a still capture.
+/// `poster.png`, optional `moment-NNN.png` frames, `recording.mp4`, and
+/// optionally `recording.<audio-extension>`. The manifest names the movie and
+/// audio through `artifacts.video` and `artifacts.audio`; the canonical compiler
+/// treats the poster as the first keyframe image exactly as it does for a still
+/// capture, and each captured moment as an additional keyframe.
 public struct NativeRecordingBundle: Sendable {
     public let sessionId: String
     public let createdAt: Date
@@ -16,8 +17,29 @@ public struct NativeRecordingBundle: Sendable {
     public let imageHeight: Int
     public let durationMilliseconds: Int
     public let hasMicrophoneAudio: Bool
+    /// Number of keyframes in the manifest: the poster plus captured moments.
+    public let keyframeCount: Int
     public let manifestJSON: Data
     public let archive: Data
+}
+
+/// One reviewed moment from a recording. The caller extracts a PNG from the
+/// movie and supplies normalized annotations for that exact timestamp. The
+/// bundle builder assigns file names, annotation ids, and manifest ordering.
+public struct NativeRecordingMoment: Sendable {
+    public let atMs: Int
+    public let pngData: Data
+    public let annotations: [NativeCaptureAnnotation]
+
+    public init(
+        atMs: Int,
+        pngData: Data,
+        annotations: [NativeCaptureAnnotation] = []
+    ) {
+        self.atMs = atMs
+        self.pngData = pngData
+        self.annotations = annotations
+    }
 }
 
 public enum NativeRecordingBundleError: LocalizedError, Equatable {
@@ -27,6 +49,8 @@ public enum NativeRecordingBundleError: LocalizedError, Equatable {
     case emptyNote
     case noteTooLong
     case invalidHighlight
+    case invalidAnnotation
+    case invalidMoment
     case invalidSessionId
     case invalidAudio
     case invalidAudioExtension
@@ -46,6 +70,10 @@ public enum NativeRecordingBundleError: LocalizedError, Equatable {
             return "Keep the note under 2,000 characters."
         case .invalidHighlight:
             return "Draw the poster highlight inside the image."
+        case .invalidAnnotation:
+            return "Keep every annotation inside the frame and make it large enough to see."
+        case .invalidMoment:
+            return "Each captured frame must be a readable image from inside the recording, at least half a second apart."
         case .invalidSessionId:
             return "The recording session identifier is not valid."
         case .invalidAudio:
@@ -67,16 +95,34 @@ public enum NativeRecordingBundleBuilder {
     public static let movieFileName = "recording.mp4"
     public static let posterFileName = "poster.png"
     public static let maximumDurationMilliseconds = 24 * 60 * 60 * 1_000
+    /// The compiler's default keyframe cap is twelve, including the poster.
+    public static let maximumMomentCount = 11
+    /// Matches the compiler's default duplicate-frame gap so every reviewed
+    /// moment survives compilation instead of being merged into its neighbour.
+    public static let minimumMomentGapMilliseconds = 500
+
+    /// The compiler budgets six keyframes up to 20 seconds, then one more per
+    /// 20 seconds, capped at twelve. Keep the poster inside that budget so a
+    /// reviewed moment is not silently dropped at compile time.
+    public static func maximumMoments(forDurationMilliseconds durationMilliseconds: Int) -> Int {
+        let extra = max(0, durationMilliseconds - 20_000) / 20_000
+        let budget = min(12, 6 + extra)
+        return max(0, min(maximumMomentCount, budget - 1))
+    }
 
     private static let pageURL = "highlite://native-capture/recording"
 
+    /// Builds a recording with the full browser annotation set. The poster is
+    /// the first keyframe at 0 ms; each reviewed moment becomes an additional
+    /// keyframe with its own extracted PNG and normalized annotations.
     public static func build(
         movieData: Data,
         posterPNGData: Data,
         audioData: Data? = nil,
         audioFileExtension: String = "m4a",
         note: String,
-        highlight: NativeCaptureRect? = nil,
+        annotations: [NativeCaptureAnnotation] = [],
+        moments: [NativeRecordingMoment] = [],
         durationMilliseconds: Int,
         createdAt: Date = Date(),
         sessionId: String? = nil
@@ -103,17 +149,18 @@ public enum NativeRecordingBundleBuilder {
         guard trimmedNote.count <= maximumNoteLength else {
             throw NativeRecordingBundleError.noteTooLong
         }
-        if let highlight {
-            do {
-                try NativeCaptureBundleBuilder.validate(
-                    highlight,
-                    imageWidth: imageWidth,
-                    imageHeight: imageHeight
-                )
-            } catch {
-                throw NativeRecordingBundleError.invalidHighlight
-            }
-        }
+
+        try validateAnnotations(
+            annotations,
+            imageWidth: imageWidth,
+            imageHeight: imageHeight
+        )
+        let sortedMoments = try validatedMoments(
+            moments,
+            durationMilliseconds: durationMilliseconds,
+            imageWidth: imageWidth,
+            imageHeight: imageHeight
+        )
 
         let audioFileName: String?
         if let audioData {
@@ -133,6 +180,11 @@ public enum NativeRecordingBundleBuilder {
             throw NativeRecordingBundleError.invalidSessionId
         }
 
+        let frames = makeFrames(
+            posterPNGData: posterPNGData,
+            annotations: annotations,
+            moments: sortedMoments
+        )
         let manifestData = try makeManifest(
             sessionId: identifier,
             createdAt: createdAt,
@@ -140,15 +192,18 @@ public enum NativeRecordingBundleBuilder {
             imageWidth: imageWidth,
             imageHeight: imageHeight,
             durationMilliseconds: durationMilliseconds,
-            highlight: highlight,
+            frames: frames,
             audioFileName: audioFileName
         )
 
         var entries = [
             StoredZip.Entry(name: "manifest.json", data: manifestData),
             StoredZip.Entry(name: posterFileName, data: posterPNGData),
-            StoredZip.Entry(name: movieFileName, data: movieData),
         ]
+        for frame in frames.dropFirst() {
+            entries.append(StoredZip.Entry(name: frame.imagePath, data: frame.pngData))
+        }
+        entries.append(StoredZip.Entry(name: movieFileName, data: movieData))
         if let audioData, let audioFileName {
             entries.append(StoredZip.Entry(name: audioFileName, data: audioData))
         }
@@ -168,9 +223,154 @@ public enum NativeRecordingBundleBuilder {
             imageHeight: imageHeight,
             durationMilliseconds: durationMilliseconds,
             hasMicrophoneAudio: audioFileName != nil,
+            keyframeCount: frames.count,
             manifestJSON: manifestData,
             archive: archive
         )
+    }
+
+    /// Backward-compatible poster-highlight entry point. A lone highlight keeps
+    /// the canonical `native-highlight` annotation and `native-annotation` event
+    /// ids, so existing recording manifests stay byte-compatible.
+    public static func build(
+        movieData: Data,
+        posterPNGData: Data,
+        audioData: Data? = nil,
+        audioFileExtension: String = "m4a",
+        note: String,
+        highlight: NativeCaptureRect?,
+        durationMilliseconds: Int,
+        createdAt: Date = Date(),
+        sessionId: String? = nil
+    ) throws -> NativeRecordingBundle {
+        let annotations = highlight.map { rect in
+            [
+                NativeCaptureAnnotation(
+                    kind: .highlight,
+                    points: [
+                        NativeCapturePoint(x: rect.x, y: rect.y),
+                        NativeCapturePoint(x: rect.maxX, y: rect.maxY),
+                    ]
+                )
+            ]
+        } ?? []
+        do {
+            return try build(
+                movieData: movieData,
+                posterPNGData: posterPNGData,
+                audioData: audioData,
+                audioFileExtension: audioFileExtension,
+                note: note,
+                annotations: annotations,
+                moments: [],
+                durationMilliseconds: durationMilliseconds,
+                createdAt: createdAt,
+                sessionId: sessionId
+            )
+        } catch let error as NativeRecordingBundleError {
+            switch error {
+            case .invalidAnnotation:
+                throw NativeRecordingBundleError.invalidHighlight
+            default:
+                throw error
+            }
+        } catch {
+            throw error
+        }
+    }
+
+    private struct FrameSpec {
+        let atMs: Int
+        let imagePath: String
+        let pngData: Data
+        let annotations: [NativeCaptureAnnotation]
+    }
+
+    private static func validateAnnotations(
+        _ annotations: [NativeCaptureAnnotation],
+        imageWidth: Int,
+        imageHeight: Int
+    ) throws {
+        guard !annotations.isEmpty else { return }
+        guard annotations.count <= NativeCaptureAnnotationLimits.maximumAnnotations else {
+            throw NativeRecordingBundleError.invalidAnnotation
+        }
+        do {
+            try NativeCaptureBundleBuilder.validate(
+                annotations,
+                imageWidth: imageWidth,
+                imageHeight: imageHeight
+            )
+        } catch {
+            throw NativeRecordingBundleError.invalidAnnotation
+        }
+    }
+
+    private static func validatedMoments(
+        _ moments: [NativeRecordingMoment],
+        durationMilliseconds: Int,
+        imageWidth: Int,
+        imageHeight: Int
+    ) throws -> [NativeRecordingMoment] {
+        guard moments.count <= maximumMoments(forDurationMilliseconds: durationMilliseconds) else {
+            throw NativeRecordingBundleError.invalidMoment
+        }
+        let sorted = moments.sorted { $0.atMs < $1.atMs }
+        // The poster occupies the 0 ms keyframe, so the first captured moment
+        // must clear the same gap or the compiler can merge it into the poster.
+        var previousAtMs = 0
+        for moment in sorted {
+            guard moment.atMs > 0,
+                  moment.atMs <= durationMilliseconds
+            else {
+                throw NativeRecordingBundleError.invalidMoment
+            }
+            if moment.atMs - previousAtMs < minimumMomentGapMilliseconds {
+                throw NativeRecordingBundleError.invalidMoment
+            }
+            let dimensions: (Int, Int)
+            do {
+                dimensions = try NativeCaptureBundleBuilder.imageDimensions(in: moment.pngData)
+            } catch {
+                throw NativeRecordingBundleError.invalidMoment
+            }
+            guard dimensions == (imageWidth, imageHeight) else {
+                throw NativeRecordingBundleError.invalidMoment
+            }
+            try validateAnnotations(
+                moment.annotations,
+                imageWidth: imageWidth,
+                imageHeight: imageHeight
+            )
+            previousAtMs = moment.atMs
+        }
+        return sorted
+    }
+
+    private static func makeFrames(
+        posterPNGData: Data,
+        annotations: [NativeCaptureAnnotation],
+        moments: [NativeRecordingMoment]
+    ) -> [FrameSpec] {
+        var frames = [
+            FrameSpec(
+                atMs: 0,
+                imagePath: posterFileName,
+                pngData: posterPNGData,
+                annotations: annotations
+            )
+        ]
+        for (index, moment) in moments.enumerated() {
+            frames.append(
+                FrameSpec(
+                    atMs: moment.atMs,
+                    imagePath: String(format: "moment-%03d.png", index + 1),
+                    pngData: moment.pngData,
+                    annotations: moment.annotations
+                )
+            )
+        }
+        return frames
     }
 
     private static func validateMovie(_ data: Data) throws {
@@ -205,7 +405,7 @@ public enum NativeRecordingBundleBuilder {
         imageWidth: Int,
         imageHeight: Int,
         durationMilliseconds: Int,
-        highlight: NativeCaptureRect?,
+        frames: [FrameSpec],
         audioFileName: String?
     ) throws -> Data {
         let formatter = ISO8601DateFormatter()
@@ -232,61 +432,78 @@ public enum NativeRecordingBundleBuilder {
             ]
         )
 
-        let annotations: [ManifestAnnotation]
-        let timeline: [ManifestTimelineEvent]
-        let annotationIds: [String]
-        let eventIds: [String]
-        let reason: String
+        // Review annotations belong to the frame they were drawn on. The
+        // compiler treats a missing fade as "visible forever", so multi-frame
+        // recordings give annotations a 1 ms fade to stop them bleeding into
+        // every later keyframe. Single-frame manifests omit the fields to stay
+        // byte-compatible with the original recording contract.
+        let usesPerFrameFade = frames.count > 1
+        var usedAnnotationIds: Set<String> = []
+        var usedEventIds: Set<String> = []
+        var sequence = 0
+        var annotations: [ManifestAnnotation] = []
+        var timeline: [ManifestTimelineEvent] = []
+        var keyframes: [ManifestKeyframe] = []
 
-        if let highlight {
-            let annotation = ManifestAnnotation(
-                id: "native-highlight",
-                atMs: 0,
-                kind: "highlight",
-                points: [
-                    ManifestPoint(x: highlight.x, y: highlight.y),
-                    ManifestPoint(x: highlight.maxX, y: highlight.maxY),
-                ],
-                coordinateSpace: "viewport-normalized",
-                strokeWidth: 4,
-                targetId: region.id
-            )
-            let event = ManifestTimelineEvent(
-                id: "native-annotation",
-                seq: 0,
-                atMs: 0,
-                kind: "annotation",
-                targetId: region.id,
-                payload: ManifestAnnotationPayload(
-                    annotationId: annotation.id,
-                    annotationKind: annotation.kind,
-                    x: width * highlight.x,
-                    y: height * highlight.y
+        for (frameIndex, frame) in frames.enumerated() {
+            var annotationIds: [String] = []
+            var eventIds: [String] = []
+            for annotation in frame.annotations {
+                let annotationId = nextAnnotationId(
+                    kind: annotation.kind,
+                    used: &usedAnnotationIds
+                )
+                annotations.append(
+                    ManifestAnnotation(
+                        id: annotationId,
+                        atMs: frame.atMs,
+                        kind: annotation.kind.rawValue,
+                        points: annotation.points.map {
+                            ManifestPoint(x: $0.x, y: $0.y)
+                        },
+                        coordinateSpace: "viewport-normalized",
+                        strokeWidth: NativeCaptureAnnotationLimits.strokeWidth,
+                        fadeAfterMs: usesPerFrameFade ? 0 : nil,
+                        fadeDurationMs: usesPerFrameFade ? 1 : nil,
+                        targetId: region.id
+                    )
+                )
+
+                let origin = annotation.points[0]
+                let eventId = nextEventId(used: &usedEventIds)
+                timeline.append(
+                    ManifestTimelineEvent(
+                        id: eventId,
+                        seq: sequence,
+                        atMs: frame.atMs,
+                        kind: "annotation",
+                        targetId: region.id,
+                        payload: ManifestAnnotationPayload(
+                            annotationId: annotationId,
+                            annotationKind: annotation.kind.rawValue,
+                            x: width * origin.x,
+                            y: height * origin.y
+                        )
+                    )
+                )
+                annotationIds.append(annotationId)
+                eventIds.append(eventId)
+                sequence += 1
+            }
+
+            keyframes.append(
+                ManifestKeyframe(
+                    id: frameIndex == 0 ? "native-frame" : "native-frame-\(frameIndex + 1)",
+                    atMs: frame.atMs,
+                    imagePath: frame.imagePath,
+                    targetIds: [region.id],
+                    annotationIds: annotationIds,
+                    transcriptSegmentIds: [],
+                    reason: annotationIds.isEmpty ? "mark" : "annotation",
+                    eventIds: eventIds
                 )
             )
-            annotations = [annotation]
-            timeline = [event]
-            annotationIds = [annotation.id]
-            eventIds = [event.id]
-            reason = "annotation"
-        } else {
-            annotations = []
-            timeline = []
-            annotationIds = []
-            eventIds = []
-            reason = "mark"
         }
-
-        let keyframe = ManifestKeyframe(
-            id: "native-frame",
-            atMs: 0,
-            imagePath: posterFileName,
-            targetIds: [region.id],
-            annotationIds: annotationIds,
-            transcriptSegmentIds: [],
-            reason: reason,
-            eventIds: eventIds
-        )
         let manifest = Manifest(
             schemaVersion: "0.1.0",
             sessionId: sessionId,
@@ -301,7 +518,7 @@ public enum NativeRecordingBundleBuilder {
             targets: [region],
             annotations: annotations,
             transcript: [],
-            keyframes: [keyframe],
+            keyframes: keyframes,
             artifacts: ManifestArtifacts(
                 audio: audioFileName,
                 video: movieFileName
@@ -314,5 +531,35 @@ public enum NativeRecordingBundleBuilder {
         var data = try encoder.encode(manifest)
         data.append(0x0A)
         return data
+    }
+
+    /// First use of each tool keeps the legacy base id (`native-highlight`,
+    /// `native-circle`, …); later uses append an occurrence suffix.
+    private static func nextAnnotationId(
+        kind: NativeCaptureAnnotationKind,
+        used: inout Set<String>
+    ) -> String {
+        let base = "native-\(kind.rawValue)"
+        var candidate = base
+        var occurrence = 1
+        while used.contains(candidate) {
+            occurrence += 1
+            candidate = "\(base)-\(occurrence)"
+        }
+        used.insert(candidate)
+        return candidate
+    }
+
+    /// The first annotation keeps the canonical `native-annotation` event id so
+    /// a single poster highlight remains byte-compatible with earlier saves.
+    private static func nextEventId(used: inout Set<String>) -> String {
+        var candidate = "native-annotation"
+        var occurrence = 1
+        while used.contains(candidate) {
+            occurrence += 1
+            candidate = "native-annotation-\(occurrence)"
+        }
+        used.insert(candidate)
+        return candidate
     }
 }

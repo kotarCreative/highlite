@@ -250,18 +250,29 @@ recorder also stops itself at a 45-second or 48-MiB budget, then opens the same
 review. Stopping finalizes the MP4, closes the share, and opens a native review
 window with:
 
-- AVKit playback of the movie;
-- the still poster with an optional drag-to-highlight rectangle;
-- a required note that becomes the session title and poster label; and
+- AVKit playback of the movie, with pause and scrub controls;
+- **Add frame from playhead**, which captures the current video frame as its
+  own keyframe, at least half a second from the poster and any other captured
+  frame;
+- the browser SDK's freehand, circle, arrow, and highlight tools on the poster
+  and on every captured frame, with **Undo** and **Clear**;
+- a required note that becomes the session title and target label; and
 - an explicit **Save to Highlite** action.
 
-The app builds a ZIP containing `manifest.json`, `poster.png`, `recording.mp4`,
-and, only when the microphone was enabled, `recording.m4a`. The manifest names
-the media additively through `artifacts.video = "recording.mp4"` and optional
-`artifacts.audio`. It is POSTed to the relay's existing local `/v1/sessions`
-ingest endpoint with the stored ingest token. The app itself does not launch
-Jira, OpenCode, or a provider action; configured relay recipes may react to the
-new session exactly as they do for any other capture.
+The app builds a ZIP containing `manifest.json`, `poster.png`, one
+`moment-NNN.png` per captured frame, `recording.mp4`, and, only when the
+microphone was enabled, `recording.m4a`. The poster is the first keyframe at
+0 ms; each captured frame is an additional keyframe at its reviewed timestamp.
+Annotation happens in review rather than as a live overlay in the captured
+window, but the manifest keeps the same keyframe-and-annotation model as the
+browser toolbar. The manifest names the media additively through
+`artifacts.video = "recording.mp4"` and optional `artifacts.audio`. Annotations
+stay as normalized geometry and are attached to the frame they were drawn on,
+so the canonical compiler remains the only annotation renderer. It is POSTed to
+the relay's existing local `/v1/sessions` ingest endpoint with the stored ingest
+token. The app itself does not launch Jira, OpenCode, or a provider action;
+configured relay recipes may react to the new session exactly as they do for any
+other capture.
 
 Only one screen flow can be active at a time: the still-capture picker, its
 review window, recording setup, the active recording, and recording review are

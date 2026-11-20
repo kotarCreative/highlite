@@ -35,8 +35,10 @@ enum AppWindowLayout {
     static let recordingSetupContentSize = NSSize(width: 580, height: 500)
     static let recordingSetupMinimumContentSize = NSSize(width: 540, height: 460)
 
-    static let recordingReviewContentSize = NSSize(width: 1_000, height: 820)
-    static let recordingReviewMinimumContentSize = NSSize(width: 820, height: 700)
+    static let recordingReviewContentSize = NSSize(width: 1_080, height: 900)
+    // The annotation tool row and playback transport sit above the note; keep
+    // enough height for the video, annotated frame, note, and footer.
+    static let recordingReviewMinimumContentSize = NSSize(width: 900, height: 760)
 }
 
 @MainActor

@@ -3,9 +3,10 @@ import AVKit
 import HighliteMenuBarCore
 import SwiftUI
 
-/// Native review window for one screen recording: AVKit playback, an optional
-/// highlight on the still poster, a note, and an explicit save to the local
-/// relay. Nothing is uploaded until Save to Highlite is chosen.
+/// Native review window for one screen recording: AVKit playback, frame
+/// capture at reviewed moments, the browser SDK's annotation tools, a note, and
+/// an explicit save to the local relay. Nothing is uploaded until Save to
+/// Highlite is chosen.
 struct RecordingReviewView: View {
     @ObservedObject var draft: NativeRecordingDraft
     let onSave: @MainActor (NativeRecordingBundle) async throws -> SessionMetadata
@@ -17,9 +18,15 @@ struct RecordingReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            AnnotationToolbar(
+                selectedTool: $draft.selectedTool,
+                annotations: draft.selectedAnnotations,
+                onUndo: draft.undoLastAnnotation,
+                onClear: draft.clearAnnotations
+            )
             HStack(alignment: .top, spacing: 14) {
                 videoPane
-                posterPane
+                framePane
             }
             .frame(maxHeight: .infinity)
             noteEditor
@@ -54,16 +61,18 @@ struct RecordingReviewView: View {
                 Text("Review screen recording")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(DashboardTheme.ink)
-                Text("Play back the recording, optionally mark the still poster, and add a note. The recording stays local until you save it to the relay.")
+                Text("Pause where something matters, add that frame, then draw with freehand, circle, arrow, or highlight. The recording stays local until you save it to the relay.")
                     .font(.callout)
                     .foregroundStyle(DashboardTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
             HStack(spacing: 6) {
-                Text(Self.durationText(draft.durationMilliseconds))
+                Text(NativeRecordingDraft.timeText(draft.durationMilliseconds))
                 Text("·")
-                Text("\(draft.imageWidth) × \(draft.imageHeight) poster")
+                Text("\(draft.keyframeCount) frame\(draft.keyframeCount == 1 ? "" : "s")")
+                Text("·")
+                Text("\(draft.imageWidth) × \(draft.imageHeight)")
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(DashboardTheme.muted)
@@ -93,76 +102,181 @@ struct RecordingReviewView: View {
                         .strokeBorder(DashboardTheme.lineStrong, lineWidth: 1)
                 }
                 .accessibilityLabel("Recorded screen video")
+            transport
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var posterPane: some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private var transport: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Button {
+                    draft.togglePlayback()
+                } label: {
+                    Image(systemName: draft.isPlaying ? "pause.fill" : "play.fill")
+                        .frame(width: 16)
+                }
+                .buttonStyle(.bordered)
+                .help(draft.isPlaying ? "Pause playback" : "Play recording")
+                .accessibilityLabel(draft.isPlaying ? "Pause playback" : "Play recording")
+
+                Slider(
+                    value: Binding(
+                        get: { Double(draft.playbackTimeMilliseconds) / 1_000 },
+                        set: { draft.seek(toMilliseconds: Int(($0 * 1_000).rounded())) }
+                    ),
+                    in: 0...max(0.1, Double(draft.durationMilliseconds) / 1_000)
+                )
+                .accessibilityLabel("Playback position")
+
+                Text(
+                    "\(NativeRecordingDraft.timeText(draft.playbackTimeMilliseconds)) / \(NativeRecordingDraft.timeText(draft.durationMilliseconds))"
+                )
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(DashboardTheme.muted)
+                .frame(minWidth: 92, alignment: .trailing)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Button {
+                    Task { await captureFrame() }
+                } label: {
+                    Label(
+                        draft.isCapturingFrame ? "Capturing frame…" : "Add frame from playhead",
+                        systemImage: "camera"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .disabled(draft.isCapturingFrame || !draft.canAddMoment)
+                .help("Pauses playback and captures the current frame for annotation")
+                Spacer(minLength: 8)
+                Text("Frames must be half a second from the poster and each other.")
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.muted)
+            }
+        }
+    }
+
+    private var framePane: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Poster mark")
+                Text("Annotate frame")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(DashboardTheme.muted)
                 Spacer(minLength: 8)
-                Button("Clear") {
-                    draft.highlight = nil
-                }
-                .buttonStyle(.link)
-                .disabled(draft.highlight == nil)
-                .accessibilityHint("Removes the poster highlight")
+                Text(draft.selectedFrameLabel)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(DashboardTheme.muted)
             }
-            GeometryReader { proxy in
-                let fitted = Self.fittedRect(
-                    width: draft.imageWidth,
-                    height: draft.imageHeight,
-                    in: proxy.size
-                )
-                ZStack(alignment: .topLeading) {
-                    DashboardTheme.neutralSoft
-                    Image(nsImage: draft.image)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: fitted.width, height: fitted.height)
-                        .position(x: fitted.midX, y: fitted.midY)
-                    if let highlight = draft.highlight {
-                        let display = Self.displayRect(highlight, in: fitted)
-                        Rectangle()
-                            .fill(DashboardTheme.highlightYellow.opacity(0.38))
-                            .overlay {
-                                Rectangle()
-                                    .strokeBorder(DashboardTheme.primary, lineWidth: 2)
-                            }
-                            .frame(width: display.width, height: display.height)
-                            .position(x: display.midX, y: display.midY)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: DashboardStyle.cardCornerRadius))
-                .overlay {
-                    RoundedRectangle(cornerRadius: DashboardStyle.cardCornerRadius)
-                        .strokeBorder(DashboardTheme.lineStrong, lineWidth: 1)
-                }
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 2, coordinateSpace: .local)
-                        .onChanged { value in
-                            updateHighlight(
-                                from: value.startLocation,
-                                to: value.location,
-                                fitted: fitted
-                            )
-                        }
-                )
-                .accessibilityLabel("Still poster image")
-                .accessibilityHint("Drag to add a highlight rectangle to the poster")
-            }
-            .frame(height: 240)
-            Text("Optional. The poster becomes the session keyframe; drag once to mark the area that matters.")
+            frameSelector
+            AnnotationCanvas(
+                image: draft.selectedImage,
+                imageWidth: draft.imageWidth,
+                imageHeight: draft.imageHeight,
+                annotations: draft.selectedAnnotations,
+                selectedTool: draft.selectedTool,
+                accessibilityLabel: "Recording frame for annotation",
+                accessibilityHint: "Drag to draw with the selected annotation tool",
+                canDraw: draft.selectedAnnotations.count < NativeCaptureAnnotationLimits.maximumAnnotations,
+                onAddAnnotation: { draft.addAnnotation($0) }
+            )
+            .frame(minHeight: 280, maxHeight: .infinity)
+            Text("The poster is the opening frame. Each captured frame becomes its own keyframe, and annotations are burned into that keyframe by the canonical compiler.")
                 .font(.caption)
                 .foregroundStyle(DashboardTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: 330, alignment: .topLeading)
+        .frame(width: 400, alignment: .topLeading)
+    }
+
+    private var frameSelector: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                frameChip(
+                    title: "Poster",
+                    isSelected: draft.isPosterSelected
+                ) {
+                    draft.selectPoster()
+                }
+                ForEach(draft.moments) { moment in
+                    HStack(spacing: 2) {
+                        frameChip(
+                            title: NativeRecordingDraft.timeText(moment.atMs),
+                            isSelected: draft.selectedFrameID == moment.id,
+                            drawsBackground: false
+                        ) {
+                            draft.selectMoment(id: moment.id)
+                        }
+                        Button {
+                            draft.removeMoment(id: moment.id)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(
+                                    draft.selectedFrameID == moment.id
+                                        ? DashboardTheme.actionInk.opacity(0.75)
+                                        : DashboardTheme.muted
+                                )
+                                .padding(.trailing, 7)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove this captured frame")
+                        .accessibilityLabel("Remove frame at \(NativeRecordingDraft.timeText(moment.atMs))")
+                    }
+                    .background(
+                        draft.selectedFrameID == moment.id
+                            ? DashboardTheme.action
+                            : DashboardTheme.neutralSoft,
+                        in: Capsule()
+                    )
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(
+                                draft.selectedFrameID == moment.id
+                                    ? DashboardTheme.actionInk.opacity(0.8)
+                                    : DashboardTheme.lineStrong,
+                                lineWidth: 1
+                            )
+                    }
+                }
+            }
+            .padding(.vertical, 1)
+        }
+        .frame(height: 32)
+        .accessibilityLabel("Captured frames")
+    }
+
+    private func frameChip(
+        title: String,
+        isSelected: Bool,
+        drawsBackground: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.monospacedDigit().weight(.medium))
+                .foregroundStyle(isSelected ? DashboardTheme.actionInk : DashboardTheme.ink)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(
+                    drawsBackground
+                        ? (isSelected ? DashboardTheme.action : DashboardTheme.neutralSoft)
+                        : Color.clear,
+                    in: Capsule()
+                )
+                .overlay {
+                    Capsule()
+                        .strokeBorder(
+                            drawsBackground
+                                ? (isSelected
+                                    ? DashboardTheme.actionInk.opacity(0.8)
+                                    : DashboardTheme.lineStrong)
+                                : Color.clear,
+                            lineWidth: 1
+                        )
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var noteEditor: some View {
@@ -175,7 +289,7 @@ struct RecordingReviewView: View {
                 .lineLimit(2...4)
                 .accessibilityLabel("Recording note")
             HStack(alignment: .firstTextBaseline) {
-                Text("The note becomes the session title and the poster label.")
+                Text("The note becomes the session title and the target label.")
                     .font(.caption)
                     .foregroundStyle(DashboardTheme.muted)
                 Spacer(minLength: 8)
@@ -193,7 +307,7 @@ struct RecordingReviewView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Label(
-                "MP4 video, poster, and optional microphone audio stay local until Save.",
+                "MP4 video, poster, captured frames, and optional microphone audio stay local until Save.",
                 systemImage: "video"
             )
             .font(.caption)
@@ -221,6 +335,17 @@ struct RecordingReviewView: View {
     }
 
     @MainActor
+    private func captureFrame() async {
+        guard !draft.isCapturingFrame else { return }
+        errorMessage = nil
+        do {
+            try await draft.captureFrameForAnnotation()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
     private func save() async {
         guard !isSaving, draft.canSave else { return }
         isSaving = true
@@ -234,59 +359,5 @@ struct RecordingReviewView: View {
             // Keep the draft and its temporary files so the user can retry.
             errorMessage = error.localizedDescription
         }
-    }
-
-    private func updateHighlight(from start: CGPoint, to end: CGPoint, fitted: CGRect) {
-        guard fitted.width > 0, fitted.height > 0 else { return }
-        let first = Self.normalizedPoint(start, in: fitted)
-        let last = Self.normalizedPoint(end, in: fitted)
-        let rect = NativeCaptureRect(
-            x: min(first.x, last.x),
-            y: min(first.y, last.y),
-            width: abs(last.x - first.x),
-            height: abs(last.y - first.y)
-        )
-        if rect.width * Double(draft.imageWidth) >= 2,
-           rect.height * Double(draft.imageHeight) >= 2 {
-            draft.highlight = rect
-        }
-    }
-
-    private static func normalizedPoint(_ point: CGPoint, in fitted: CGRect) -> CGPoint {
-        let x = min(max((point.x - fitted.minX) / fitted.width, 0), 1)
-        let y = min(max((point.y - fitted.minY) / fitted.height, 0), 1)
-        return CGPoint(x: x, y: y)
-    }
-
-    private static func fittedRect(width: Int, height: Int, in size: CGSize) -> CGRect {
-        guard width > 0, height > 0, size.width > 0, size.height > 0 else { return .zero }
-        let scale = min(size.width / CGFloat(width), size.height / CGFloat(height))
-        let fitted = CGSize(width: CGFloat(width) * scale, height: CGFloat(height) * scale)
-        return CGRect(
-            x: (size.width - fitted.width) / 2,
-            y: (size.height - fitted.height) / 2,
-            width: fitted.width,
-            height: fitted.height
-        )
-    }
-
-    private static func displayRect(_ highlight: NativeCaptureRect, in fitted: CGRect) -> CGRect {
-        CGRect(
-            x: fitted.minX + CGFloat(highlight.x) * fitted.width,
-            y: fitted.minY + CGFloat(highlight.y) * fitted.height,
-            width: CGFloat(highlight.width) * fitted.width,
-            height: CGFloat(highlight.height) * fitted.height
-        )
-    }
-
-    private static func durationText(_ milliseconds: Int) -> String {
-        let totalSeconds = max(0, milliseconds / 1_000)
-        let hours = totalSeconds / 3_600
-        let minutes = (totalSeconds % 3_600) / 60
-        let seconds = totalSeconds % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%d:%02d", minutes, seconds)
     }
 }
