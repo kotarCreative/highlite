@@ -2,7 +2,9 @@
 # Verify the native macOS app package.
 #
 # On macOS this compiles and tests the Swift package, builds the app bundle,
-# lints the plist, and verifies the ad-hoc signature.
+# lints the plist, and verifies the ad-hoc signature. Compiling needs the
+# macOS 15 SDK (Xcode 16 or newer) because the recorder guards macOS 15
+# ScreenCaptureKit APIs with @available; the deployment floor stays macOS 14.
 #
 # On Linux this performs static package checks only. Passing here is NOT proof
 # that the Swift app compiles, that Keychain works, or that the bundle is valid.
@@ -33,6 +35,54 @@ require_grep() {
   grep -Eq "$pattern" "$file" || fail "expected pattern '$pattern' in ${file#"$ROOT/"}"
 }
 
+MIN_XCODE_VERSION="16.0"
+MIN_MACOS_SDK_VERSION="15.0"
+
+# Numeric dotted-version comparison: succeeds when "$1" is at least "$2".
+version_at_least() {
+  awk -v have="$1" -v want="$2" 'BEGIN {
+    nh = split(have, h, ".")
+    nw = split(want, w, ".")
+    for (i = 1; i <= 3; i++) {
+      hv = (i <= nh && h[i] ~ /^[0-9]+$/) ? h[i] + 0 : 0
+      wv = (i <= nw && w[i] ~ /^[0-9]+$/) ? w[i] + 0 : 0
+      if (hv > wv) exit 0
+      if (hv < wv) exit 1
+    }
+    exit 0
+  }'
+}
+
+# The ScreenCaptureKit recording APIs used by the app are macOS 15 SDK APIs.
+# Fail before building or testing when the selected SDK is older, so the user
+# gets one clear requirement instead of a wall of Swift availability errors.
+require_macos_15_sdk() {
+  local sdk_version xcode_version=""
+
+  command -v xcrun >/dev/null 2>&1 ||
+    fail "xcrun not found on PATH: install Xcode $MIN_XCODE_VERSION or newer (macOS $MIN_MACOS_SDK_VERSION SDK) or the matching Command Line Tools"
+
+  sdk_version="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
+  [[ -n "$sdk_version" ]] ||
+    fail "could not determine the macOS SDK version: install Xcode $MIN_XCODE_VERSION or newer (macOS $MIN_MACOS_SDK_VERSION SDK) and select it with xcode-select -s"
+
+  version_at_least "$sdk_version" "$MIN_MACOS_SDK_VERSION" ||
+    fail "macOS SDK $sdk_version is too old: the ScreenCaptureKit recording APIs require the macOS $MIN_MACOS_SDK_VERSION SDK or newer (Xcode $MIN_XCODE_VERSION or newer). Select a newer Xcode with xcode-select -s"
+
+  if command -v xcodebuild >/dev/null 2>&1; then
+    xcode_version="$(xcodebuild -version 2>/dev/null | awk '/^Xcode /{print $2; exit}')" ||
+      xcode_version=""
+  fi
+
+  if [[ -n "$xcode_version" ]]; then
+    version_at_least "$xcode_version" "$MIN_XCODE_VERSION" ||
+      fail "Xcode $xcode_version is too old: Xcode $MIN_XCODE_VERSION or newer (macOS $MIN_MACOS_SDK_VERSION SDK) is required for the ScreenCaptureKit recording APIs"
+    note "Using Xcode $xcode_version with macOS SDK $sdk_version"
+  else
+    note "Using macOS SDK $sdk_version (Xcode version not detected)"
+  fi
+}
+
 [[ -d "$APP_DIR" ]] || fail "missing native app package at apps/macos"
 
 note "Checking Swift package structure and product"
@@ -48,16 +98,32 @@ require_file "$APP_DIR/Sources/HighliteMenuBarCore/RelayProcessController.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBarCore/KeychainStore.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBarCore/OpenCodeLocator.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBarCore/AppSettings.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeCaptureBundle.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeCaptureCommand.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeRecordingBundle.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBarCore/NativeRecordingTempStore.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBar/HighliteMenuBarApp.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBar/AppDelegate.swift"
 require_file "$APP_DIR/Sources/HighliteMenuBar/AppModel.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBar/NativeCaptureDraft.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBar/NativeCaptureService.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBar/NativeRecordingController.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBar/NativeRecordingDraft.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBar/NativeRecordingService.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBar/Views/CaptureReviewView.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBar/Views/RecordingSetupView.swift"
+require_file "$APP_DIR/Sources/HighliteMenuBar/Views/RecordingReviewView.swift"
 
 require_grep 'swift-tools-version:[[:space:]]*5\.9|tools:[[:space:]]*"5\.9"' "$APP_DIR/Package.swift"
-require_grep '\.macOS\(\.v14\)' "$APP_DIR/Package.swift"
+# The deployment floor stays macOS 14; macOS 15 recording APIs are guarded with
+# @available(macOS 15, *). Accept any macOS 14+ declaration (or newer during a
+# transition), while the Darwin build paths enforce the macOS 15 SDK separately.
+require_grep '\.macOS\((\.v1[4-9]|"1[4-9]\.[0-9]+")\)' "$APP_DIR/Package.swift"
 require_grep "name:[[:space:]]*\"$APP_NAME\"" "$APP_DIR/Package.swift"
 require_grep "HighliteMenuBarCore" "$APP_DIR/Package.swift"
 [[ -d "$APP_DIR/Tests/HighliteMenuBarCoreTests" ]] ||
   fail "missing Tests/HighliteMenuBarCoreTests"
+require_file "$APP_DIR/Tests/HighliteMenuBarCoreTests/Fixtures/native-recording-manifest.json"
 
 note "Checking initial browser ingest origins"
 for origin in 'http://localhost:5173' 'http://127.0.0.1:5173'; do
@@ -71,10 +137,11 @@ for expected in \
   'HighliteMenuBar' \
   'APPL' \
   '0.1.0' \
-  '14.0' \
+  'LSMinimumSystemVersion' \
   'LSUIElement' \
   'AppIcon.icns' \
-  'NSAllowsLocalNetworking'; do
+  'NSAllowsLocalNetworking' \
+  'NSMicrophoneUsageDescription'; do
   grep -q "$expected" "$INFO_PLIST" || fail "Info.plist is missing expected value: $expected"
 done
 
@@ -93,15 +160,28 @@ expected = {
     'CFBundlePackageType': 'APPL',
     'CFBundleShortVersionString': '0.1.0',
     'CFBundleVersion': '1',
-    'LSMinimumSystemVersion': '14.0',
     'LSUIElement': True,
     'NSHighResolutionCapable': True,
 }
 for key, wanted in expected.items():
     if value.get(key) != wanted:
         raise SystemExit(f'Info.plist {key} expected {wanted!r}, got {value.get(key)!r}')
+minimum = str(value.get('LSMinimumSystemVersion', ''))
+parts = minimum.split('.')
+if not parts or not all(part.isdigit() for part in parts):
+    raise SystemExit(
+        f'Info.plist LSMinimumSystemVersion expected a macOS version, got {minimum!r}'
+    )
+normalized = tuple(int(part) for part in parts) + (0, 0)
+if normalized[:2] < (14, 0):
+    raise SystemExit(
+        f'Info.plist LSMinimumSystemVersion expected macOS 14.0 or newer, got {minimum!r}'
+    )
 if value.get('NSAppTransportSecurity', {}).get('NSAllowsLocalNetworking') is not True:
     raise SystemExit('Info.plist must allow local networking')
+microphone = value.get('NSMicrophoneUsageDescription')
+if not isinstance(microphone, str) or not microphone.strip():
+    raise SystemExit('Info.plist must explain microphone recording in NSMicrophoneUsageDescription')
 PY
 else
   note "python3 not found; plist key checks use text matching only"
@@ -149,6 +229,14 @@ if [[ -n "$forbidden" ]]; then
   fail "native app sources reference a forbidden focused-window or scripting API"
 fi
 
+note "Checking the additive native recording artifact contract"
+require_grep 'movieFileName[[:space:]]*=[[:space:]]*"recording.mp4"' \
+  "$APP_DIR/Sources/HighliteMenuBarCore/NativeRecordingBundle.swift"
+require_grep 'posterFileName[[:space:]]*=[[:space:]]*"poster.png"' \
+  "$APP_DIR/Sources/HighliteMenuBarCore/NativeRecordingBundle.swift"
+require_grep 'ManifestArtifacts' \
+  "$APP_DIR/Sources/HighliteMenuBarCore/NativeRecordingBundle.swift"
+
 note "Checking packaging scripts and build-architecture documentation"
 require_file "$ROOT/scripts/build-macos-app.sh"
 bash -n "$ROOT/scripts/build-macos-app.sh"
@@ -174,6 +262,8 @@ fi
 for tool in swift plutil codesign lipo; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool not found on PATH: $tool"
 done
+
+require_macos_15_sdk
 
 note "Building the Swift package (release)"
 swift build --package-path "$APP_DIR" -c release --product "$APP_NAME"

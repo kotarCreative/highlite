@@ -1,7 +1,8 @@
 # Agent bundle
 
 `highlite-compiler bundle` turns a capture into a folder an agent can read without the
-original app, video, or browser session.
+original app or browser session. If the capture explicitly names a video file, `bundle`
+copies that file alongside the bundle.
 
 ```sh
 highlite-compiler bundle ./capture --out ./capture-bundle \
@@ -24,6 +25,9 @@ highlite-compiler bundle ./capture --out ./capture-bundle \
    events, and target/window metadata.
 6. **`bundle.json` / `analysis.json`** — the full `CompiledBundle` and `CaptureAnalysis` for
    tooling: scores, crop rects, event alignment, docs refs, warnings.
+7. **Video file (optional)** — a copy of `manifest.artifacts.video` when the capture named
+   one, also listed as `Video: <name>` in `summary.md`. The compiler does not record video,
+   and the file is not attached externally by default.
 
 ## Suggested agent prompt
 
@@ -49,3 +53,8 @@ highlite-compiler bundle ./capture --out ./capture-bundle \
   never cut off at the edge.
 - A spoken cue that had no captured frame is reported as a warning instead of fabricating one.
 - Transcript times are on the session clock; ASR audio offsets are applied during compilation.
+- Video is copied only when the capture explicitly sets `artifacts.video`; paths that escape
+  the capture folder are rejected, and the manifest records the copied file name. The copy is
+  the recorder's file — not a recording made by `bundle`, not a claim of Scrawl format
+  compatibility (see [compiler behavior](../crates/highlite-compiler/README.md#optional-video)),
+  and not a default attachment (see [Jira publication modes](./jira-recipe.md#publication-modes)).

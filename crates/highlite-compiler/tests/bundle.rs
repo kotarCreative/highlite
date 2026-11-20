@@ -12,6 +12,7 @@ fn capture_with_one_annotated_frame(directory: &std::path::Path) {
     let mut manifest = manifest;
     manifest.keyframes.retain(|frame| frame.id == "f4");
     manifest.artifacts.audio = Some("audio.webm".to_owned());
+    manifest.artifacts.video = Some("recording.mp4".to_owned());
 
     fs::create_dir_all(directory.join("frames")).expect("frames dir");
     let mut image = RgbaImage::from_pixel(1_000, 800, Rgba([32, 36, 48, 255]));
@@ -24,6 +25,11 @@ fn capture_with_one_annotated_frame(directory: &std::path::Path) {
         .save(directory.join("frames/f4.png"))
         .expect("write frame");
     fs::write(directory.join("audio.webm"), b"not real audio").expect("write audio");
+    fs::write(
+        directory.join("recording.mp4"),
+        b"\x00\x00\x00\x18ftypmp42dummy",
+    )
+    .expect("write video");
     fs::write(
         directory.join("manifest.json"),
         serde_json::to_string_pretty(&manifest).expect("manifest JSON"),
@@ -64,7 +70,12 @@ fn writes_an_agent_ready_bundle_with_rendered_frames_and_a_sheet() {
     assert!(output.path().join("report.json").is_file());
     assert!(output.path().join("contact-sheet.png").is_file());
     assert!(output.path().join("audio.webm").is_file());
+    assert!(output.path().join("recording.mp4").is_file());
     assert!(output.path().join("frames/frame-01.png").is_file());
+    assert_eq!(
+        fs::read(output.path().join("recording.mp4")).expect("read bundle video"),
+        b"\x00\x00\x00\x18ftypmp42dummy"
+    );
 
     // The crop is applied to the stored frame, not only reported as numbers.
     let rendered = image::open(output.path().join("frames/frame-01.png"))
@@ -78,6 +89,7 @@ fn writes_an_agent_ready_bundle_with_rendered_frames_and_a_sheet() {
     .expect("parse scrawl");
     assert_eq!(scrawl["keyframes"][0]["file"], "frames/frame-01.png");
     assert_eq!(scrawl["contactSheet"], "contact-sheet.png");
+    assert_eq!(scrawl["video"], "recording.mp4");
     assert_eq!(scrawl["source"], "browser");
 
     let manifest: serde_json::Value = serde_json::from_str(
@@ -85,7 +97,177 @@ fn writes_an_agent_ready_bundle_with_rendered_frames_and_a_sheet() {
     )
     .expect("parse manifest");
     assert_eq!(manifest["artifacts"]["contactSheet"], "contact-sheet.png");
+    assert_eq!(manifest["artifacts"]["video"], "recording.mp4");
     assert_eq!(manifest["keyframes"][0]["imagePath"], "frames/frame-01.png");
+    assert!(
+        written_summary(output.path()).contains("Video: recording.mp4"),
+        "summary should point at the bundled playback asset"
+    );
+}
+
+fn written_summary(directory: &std::path::Path) -> String {
+    fs::read_to_string(directory.join("summary.md")).expect("summary")
+}
+
+fn set_artifacts(directory: &std::path::Path, audio: Option<&str>, video: Option<&str>) {
+    let path = directory.join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read manifest"))
+            .expect("parse manifest");
+    let artifacts = manifest
+        .get_mut("artifacts")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("artifacts object");
+    match audio {
+        Some(audio) => {
+            artifacts.insert("audio".to_owned(), serde_json::json!(audio));
+        }
+        None => {
+            artifacts.remove("audio");
+        }
+    }
+    match video {
+        Some(video) => {
+            artifacts.insert("video".to_owned(), serde_json::json!(video));
+        }
+        None => {
+            artifacts.remove("video");
+        }
+    }
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&manifest).expect("manifest JSON"),
+    )
+    .expect("write manifest");
+}
+
+fn bundle_error(directory: &std::path::Path, output: &std::path::Path) -> String {
+    let manifest: highlite_compiler::HighliteManifest = serde_json::from_str(
+        &fs::read_to_string(directory.join("manifest.json")).expect("read manifest"),
+    )
+    .expect("parse manifest");
+    let mut compiled = compile_capture(&CompileInput {
+        manifest,
+        frames: None,
+        viewport: None,
+        options: None,
+    });
+    write_bundle(&mut compiled, directory, output, &BundleOptions::default())
+        .expect_err("invalid media contract must be rejected")
+        .to_string()
+}
+
+#[test]
+fn rejects_video_that_escapes_the_capture_folder() {
+    let source = tempfile::tempdir().expect("capture dir");
+    let output = tempfile::tempdir().expect("output dir");
+    capture_with_one_annotated_frame(source.path());
+
+    let outside_name = format!("highlite-outside-video-{}.mp4", std::process::id());
+    let outside = source
+        .path()
+        .parent()
+        .expect("temp parent")
+        .join(&outside_name);
+    fs::write(&outside, b"\x00\x00\x00\x18ftypmp42outside").expect("write outside video");
+
+    let mut manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(source.path().join("manifest.json")).expect("read manifest"),
+    )
+    .expect("parse manifest");
+    manifest["artifacts"]["video"] = serde_json::json!(format!("../{outside_name}"));
+    fs::write(
+        source.path().join("manifest.json"),
+        serde_json::to_string_pretty(&manifest).expect("manifest JSON"),
+    )
+    .expect("write manifest");
+
+    let manifest: highlite_compiler::HighliteManifest =
+        serde_json::from_value(manifest).expect("parse manifest value");
+    let mut compiled = compile_capture(&CompileInput {
+        manifest,
+        frames: None,
+        viewport: None,
+        options: None,
+    });
+    let error = write_bundle(
+        &mut compiled,
+        source.path(),
+        output.path(),
+        &BundleOptions::default(),
+    )
+    .expect_err("an outside video path must be rejected");
+    fs::remove_file(outside).expect("remove outside video");
+    assert!(
+        error.to_string().contains("outside the capture folder"),
+        "unexpected error: {error}"
+    );
+    assert!(!output.path().join(&outside_name).exists());
+}
+
+#[test]
+fn rejects_media_that_shadows_reserved_bundle_names() {
+    let source = tempfile::tempdir().expect("capture dir");
+    let output = tempfile::tempdir().expect("output dir");
+    capture_with_one_annotated_frame(source.path());
+
+    for reserved in ["manifest.json", "Summary.MD", "contact-sheet.png", "frames"] {
+        set_artifacts(source.path(), Some("audio.webm"), Some(reserved));
+        let error = bundle_error(source.path(), output.path());
+        assert!(
+            error.contains("reserved bundle name"),
+            "expected a reserved-name error for {reserved}, got: {error}"
+        );
+    }
+}
+
+#[test]
+fn rejects_case_insensitive_audio_video_name_collisions() {
+    let source = tempfile::tempdir().expect("capture dir");
+    let output = tempfile::tempdir().expect("output dir");
+    capture_with_one_annotated_frame(source.path());
+
+    for video in ["Audio.WEBM", "AUDIO.webm"] {
+        set_artifacts(source.path(), Some("audio.webm"), Some(video));
+        let error = bundle_error(source.path(), output.path());
+        assert!(
+            error.contains("same bundle file name"),
+            "expected a collision error for {video}, got: {error}"
+        );
+    }
+}
+
+#[test]
+fn rejects_backslashes_in_media_paths() {
+    let source = tempfile::tempdir().expect("capture dir");
+    let output = tempfile::tempdir().expect("output dir");
+    capture_with_one_annotated_frame(source.path());
+
+    for (audio, video) in [
+        (Some("media\\audio.webm"), None),
+        (Some("audio.webm"), Some("media\\recording.mp4")),
+    ] {
+        set_artifacts(source.path(), audio, video);
+        let error = bundle_error(source.path(), output.path());
+        assert!(
+            error.contains("backslash"),
+            "expected a backslash error, got: {error}"
+        );
+    }
+}
+
+#[test]
+fn rejects_a_missing_video_artifact() {
+    let source = tempfile::tempdir().expect("capture dir");
+    let output = tempfile::tempdir().expect("output dir");
+    capture_with_one_annotated_frame(source.path());
+    set_artifacts(source.path(), Some("audio.webm"), Some("missing.mp4"));
+
+    let error = bundle_error(source.path(), output.path());
+    assert!(
+        error.contains("missing.mp4"),
+        "expected the missing video path in the error, got: {error}"
+    );
 }
 
 #[test]

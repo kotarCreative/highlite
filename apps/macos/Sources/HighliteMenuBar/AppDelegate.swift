@@ -12,10 +12,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var startStopMenuItem: NSMenuItem?
     private var dashboardWindow: NSWindow?
     private var reviewWindow: NSWindow?
+    private var captureWindow: NSWindow?
+    private var captureMenuItem: NSMenuItem?
+    private var recordingSetupWindow: NSWindow?
+    private var recordingReviewWindow: NSWindow?
+    private var recordingDraft: NativeRecordingDraft?
+    private let recordingController = NativeRecordingController()
+    private var recordMenuItem: NSMenuItem?
+    private var stopRecordingMenuItem: NSMenuItem?
+    private var isCapturingStill = false
     private var cancellables: Set<AnyCancellable> = []
     private var terminationInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A prior process may have crashed or been force-quit while recording.
+        // Launch is the single-instance boundary, so every leftover workspace
+        // is safe to remove before this process can start a new recording.
+        NativeRecordingTempStore.cleanupStale(olderThan: 0)
         NSApp.mainMenu = AppMenu.makeMainMenu()
         configureStatusItem()
         observeModel()
@@ -35,6 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
         terminationInProgress = true
         Task {
+            recordingDraft?.discard()
+            recordingDraft = nil
+            await recordingController.shutdown()
             await model.shutdown()
             sender.reply(toApplicationShouldTerminate: true)
         }
@@ -93,6 +109,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         dashboard.keyEquivalentModifierMask = [.command]
         menu.addItem(dashboard)
 
+        let capture = NSMenuItem(
+            title: "Capture Screen…",
+            action: #selector(captureScreen),
+            keyEquivalent: ""
+        )
+        capture.target = self
+        menu.addItem(capture)
+        captureMenuItem = capture
+
+        let record = NSMenuItem(
+            title: "Record Screen…",
+            action: #selector(recordScreen),
+            keyEquivalent: ""
+        )
+        record.target = self
+        menu.addItem(record)
+        recordMenuItem = record
+
+        let stopRecording = NSMenuItem(
+            title: "Stop Recording",
+            action: #selector(stopRecording),
+            keyEquivalent: ""
+        )
+        stopRecording.target = self
+        stopRecording.isHidden = true
+        menu.addItem(stopRecording)
+        stopRecordingMenuItem = stopRecording
+
         let startStop = NSMenuItem(
             title: "Start Relay",
             action: #selector(toggleRelay),
@@ -150,6 +194,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 }
             }
             .store(in: &cancellables)
+        recordingController.$phase
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.updateChrome() }
+            }
+            .store(in: &cancellables)
+        recordingController.$completedOutput
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    guard let self,
+                          let output = self.recordingController.consumeCompletedOutput()
+                    else {
+                        return
+                    }
+                    self.presentCompletedRecording(output)
+                }
+            }
+            .store(in: &cancellables)
+        recordingController.$failureMessage
+            .sink { [weak self] message in
+                Task { @MainActor in
+                    guard let self, let message else { return }
+                    self.model.errorMessage = "Screen recording stopped: \(message)"
+                    self.recordingController.clearFailureMessage()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -158,17 +228,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     private func updateChrome() {
         let pending = model.pendingCount
-        if let button = statusItem?.button {
-            button.title = pending > 0 ? " \(min(pending, 99))" : ""
-            button.toolTip = pending > 0
+        switch recordingController.phase {
+        case .recording(_, let includeMicrophone):
+            setStatusTitle("● REC", color: .systemRed)
+            statusItem?.button?.toolTip = includeMicrophone
+                ? "Highlite — recording screen and microphone. Choose Stop Recording to review."
+                : "Highlite — recording screen. Choose Stop Recording to review."
+            statusItem?.button?.setAccessibilityLabel("Highlite is recording the screen")
+        case .stopping:
+            setStatusTitle("● REC", color: .systemRed)
+            statusItem?.button?.toolTip = "Highlite — stopping and finalizing the recording."
+            statusItem?.button?.setAccessibilityLabel("Highlite is stopping the screen recording")
+        case .choosing:
+            setStatusTitle("◉", color: .controlAccentColor)
+            statusItem?.button?.toolTip = "Highlite — choose one window or display to record."
+            statusItem?.button?.setAccessibilityLabel("Highlite is waiting for a screen choice")
+        case .idle, .reviewing:
+            setStatusTitle(pending > 0 ? " \(min(pending, 99))" : "")
+            statusItem?.button?.toolTip = pending > 0
                 ? "Highlite — \(pending) pending OpenCode suggestion\(pending == 1 ? "" : "s")"
                 : "Highlite"
+            statusItem?.button?.setAccessibilityLabel("Highlite")
         }
+
         statusMenuItem?.title = statusText()
         pendingMenuItem?.title = pending > 0
             ? "Review \(pending) pending suggestion\(pending == 1 ? "" : "s")…"
             : "No pending suggestions"
         pendingMenuItem?.isEnabled = pending > 0
+
+        let relayReady = model.relay.isRunning && model.ingestToken != nil
+        let captureFlowOpen = captureWindow != nil
+            || recordingSetupWindow != nil
+            || recordingReviewWindow != nil
+            || isCapturingStill
+        captureMenuItem?.isEnabled = relayReady
+            && !captureFlowOpen
+            && recordingController.phase == .idle
+        recordMenuItem?.isEnabled = relayReady
+            && !captureFlowOpen
+            && recordingController.phase == .idle
+            && NativeRecordingAvailability.isSupported
+        stopRecordingMenuItem?.isHidden = !recordingController.isRecording
+        stopRecordingMenuItem?.isEnabled = recordingController.isRecording
         switch model.relay.phase {
         case .running:
             startStopMenuItem?.title = model.relay.owned ? "Stop Relay" : "Detach from Relay"
@@ -183,6 +285,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             startStopMenuItem?.title = "Start Relay"
             startStopMenuItem?.isEnabled = true
         }
+    }
+
+    private func setStatusTitle(_ text: String, color: NSColor = .labelColor) {
+        guard let button = statusItem?.button else { return }
+        let font = NSFont.monospacedDigitSystemFont(
+            ofSize: NSFont.smallSystemFontSize,
+            weight: .semibold
+        )
+        button.attributedTitle = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+            ]
+        )
     }
 
     private func statusText() -> String {
@@ -232,6 +349,218 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         Task {
             await model.reviewNextPending()
         }
+    }
+
+    @objc private func captureScreen() {
+        Task { await beginCapture() }
+    }
+
+    @objc private func recordScreen() {
+        Task { await beginRecordingSetup() }
+    }
+
+    @objc private func stopRecording() {
+        Task { await stopRecordingNow() }
+    }
+
+    private func beginCapture() async {
+        if let window = captureWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        guard recordingController.phase == .idle,
+              recordingSetupWindow == nil,
+              recordingReviewWindow == nil
+        else {
+            model.setNotice("Finish the current recording flow before capturing a still.")
+            return
+        }
+        guard !isCapturingStill else { return }
+        guard model.relay.isRunning else {
+            model.setNotice("Start the Highlite relay before capturing a screen region.")
+            return
+        }
+        guard model.ingestToken != nil else {
+            model.setNotice(
+                "The relay ingest token is unavailable. Check the relay settings and try again."
+            )
+            return
+        }
+        isCapturingStill = true
+        updateChrome()
+        defer {
+            isCapturingStill = false
+            updateChrome()
+        }
+        do {
+            let png = try await NativeCaptureService().captureInteractive()
+            let draft = try NativeCaptureDraft(pngData: png)
+            showCapture(draft)
+        } catch let error as NativeCaptureCommandError {
+            if case .cancelled = error {
+                model.setNotice(error.localizedDescription)
+            } else {
+                model.errorMessage = error.localizedDescription
+            }
+        } catch {
+            model.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func showCapture(_ draft: NativeCaptureDraft) {
+        let window = AppWindowFactory.makeCaptureWindow(
+            draft: draft,
+            onSave: { [model = model] bundle in
+                try await model.saveNativeCapture(bundle)
+            },
+            onClose: { [weak self] in
+                self?.closeCaptureWindow()
+            }
+        )
+        window.delegate = self
+        window.center()
+        captureWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func closeCaptureWindow() {
+        guard let window = captureWindow else { return }
+        captureWindow = nil
+        window.delegate = nil
+        window.close()
+        updateChrome()
+    }
+
+    // MARK: - Screen recording
+
+    private func beginRecordingSetup() async {
+        if let window = recordingSetupWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        guard NativeRecordingAvailability.isSupported else {
+            model.setNotice("Screen recording requires macOS 15 or newer. Still capture is still available.")
+            return
+        }
+        guard recordingController.phase == .idle else {
+            model.setNotice(
+                recordingController.isRecording
+                    ? "Stop the current recording before starting another."
+                    : "Finish the current recording flow before starting another."
+            )
+            return
+        }
+        guard captureWindow == nil, !isCapturingStill else {
+            model.setNotice("Finish the current screen capture before recording.")
+            return
+        }
+        guard model.relay.isRunning else {
+            model.setNotice("Start the Highlite relay before recording the screen.")
+            return
+        }
+        guard model.ingestToken != nil else {
+            model.setNotice(
+                "The relay ingest token is unavailable. Check the relay settings and try again."
+            )
+            return
+        }
+        showRecordingSetup()
+    }
+
+    private func showRecordingSetup() {
+        let window = AppWindowFactory.makeRecordingSetupWindow(
+            onStart: { [weak self] includeMicrophone in
+                guard let self else { return }
+                self.closeRecordingSetupWindow()
+                Task { await self.startRecording(includeMicrophone: includeMicrophone) }
+            },
+            onCancel: { [weak self] in
+                self?.closeRecordingSetupWindow()
+            }
+        )
+        window.delegate = self
+        window.center()
+        recordingSetupWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        updateChrome()
+    }
+
+    private func closeRecordingSetupWindow() {
+        guard let window = recordingSetupWindow else { return }
+        recordingSetupWindow = nil
+        window.delegate = nil
+        window.close()
+        updateChrome()
+    }
+
+    private func startRecording(includeMicrophone: Bool) async {
+        do {
+            try await recordingController.start(includeMicrophone: includeMicrophone)
+            model.setNotice(nil)
+        } catch {
+            model.setNotice("Screen recording did not start: \(error.localizedDescription)")
+        }
+        updateChrome()
+    }
+
+    private func stopRecordingNow() async {
+        guard recordingController.isRecording else { return }
+        do {
+            // Presentation is driven by the controller's completedOutput.
+            _ = try await recordingController.stop()
+        } catch {
+            model.errorMessage = "The recording could not be finalized: \(error.localizedDescription)"
+        }
+        updateChrome()
+    }
+
+    private func presentCompletedRecording(_ output: NativeRecordingOutput) {
+        do {
+            let draft = try NativeRecordingDraft(output: output)
+            showRecordingReview(draft)
+        } catch {
+            NativeRecordingTempStore.remove(output.directory)
+            recordingController.finishReview()
+            model.errorMessage = "The recording could not be reviewed: \(error.localizedDescription)"
+        }
+        updateChrome()
+    }
+
+    private func showRecordingReview(_ draft: NativeRecordingDraft) {
+        let window = AppWindowFactory.makeRecordingReviewWindow(
+            draft: draft,
+            onSave: { [model = model] bundle in
+                try await model.saveNativeRecording(bundle)
+            },
+            onClose: { [weak self] in
+                self?.closeRecordingReviewWindow()
+            }
+        )
+        window.delegate = self
+        window.center()
+        recordingDraft = draft
+        recordingReviewWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        updateChrome()
+    }
+
+    private func closeRecordingReviewWindow() {
+        recordingDraft?.discard()
+        recordingDraft = nil
+        recordingController.finishReview()
+        guard let window = recordingReviewWindow else {
+            updateChrome()
+            return
+        }
+        recordingReviewWindow = nil
+        window.delegate = nil
+        window.close()
+        updateChrome()
     }
 
     private func showDashboard() {
@@ -284,6 +613,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             if !suppressed {
                 model.deferCurrentReview()
             }
+        } else if window === captureWindow {
+            captureWindow = nil
+            updateChrome()
+        } else if window === recordingSetupWindow {
+            recordingSetupWindow = nil
+            updateChrome()
+        } else if window === recordingReviewWindow {
+            recordingReviewWindow = nil
+            recordingDraft?.discard()
+            recordingDraft = nil
+            recordingController.finishReview()
+            updateChrome()
         } else if window === dashboardWindow {
             dashboardWindow = nil
         }

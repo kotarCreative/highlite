@@ -95,6 +95,28 @@ pub fn write_bundle(
         ));
     }
 
+    let audio_file_name = compiled
+        .manifest
+        .artifacts
+        .audio
+        .as_deref()
+        .map(|path| media_file_name(path, "audio"))
+        .transpose()?;
+    let video_file_name = compiled
+        .manifest
+        .artifacts
+        .video
+        .as_deref()
+        .map(|path| media_file_name(path, "video"))
+        .transpose()?;
+    if let (Some(audio), Some(video)) = (&audio_file_name, &video_file_name)
+        && audio.to_lowercase() == video.to_lowercase()
+    {
+        return Err(RenderError::new(format!(
+            "The manifest audio and video paths use the same bundle file name ({audio})."
+        )));
+    }
+
     let frames_directory = output_directory.join("frames");
     fs::create_dir_all(&frames_directory).map_err(|error| {
         RenderError::new(format!(
@@ -179,21 +201,20 @@ pub fn write_bundle(
         compiled.manifest.artifacts.contact_sheet = Some(contact_sheet.clone());
     }
 
-    if let Some(audio) = &compiled.manifest.artifacts.audio {
-        let source = resolve_capture_path(capture_directory, audio)?;
-        let file_name = Path::new(audio)
-            .file_name()
-            .ok_or_else(|| RenderError::new("The manifest audio path has no file name."))?
-            .to_owned();
-        let destination = output_directory.join(&file_name);
-        fs::copy(&source, &destination).map_err(|error| {
-            RenderError::new(format!(
-                "Could not copy {} to {}: {error}",
-                source.display(),
-                destination.display()
-            ))
-        })?;
-        compiled.manifest.artifacts.audio = Some(file_name.to_string_lossy().into_owned());
+    if let (Some(audio), Some(file_name)) = (
+        compiled.manifest.artifacts.audio.as_deref(),
+        audio_file_name.as_deref(),
+    ) {
+        copy_capture_artifact(capture_directory, output_directory, audio, file_name)?;
+        compiled.manifest.artifacts.audio = Some(file_name.to_owned());
+    }
+
+    if let (Some(video), Some(file_name)) = (
+        compiled.manifest.artifacts.video.as_deref(),
+        video_file_name.as_deref(),
+    ) {
+        copy_capture_artifact(capture_directory, output_directory, video, file_name)?;
+        compiled.manifest.artifacts.video = Some(file_name.to_owned());
     }
 
     let mut scrawl = to_scrawl_bundle(compiled, &ScrawlExportOptions::default())
@@ -214,6 +235,63 @@ pub fn write_bundle(
         keyframe_paths: paths,
         contact_sheet,
     })
+}
+
+const RESERVED_BUNDLE_NAMES: &[&str] = &[
+    "manifest.json",
+    "analysis.json",
+    "report.json",
+    "bundle.json",
+    "scrawl.json",
+    "summary.md",
+    "contact-sheet.png",
+    "frames",
+];
+
+/// Validate the bundle-relative basename a media artifact will use.
+fn media_file_name(relative: &str, kind: &str) -> Result<String, RenderError> {
+    if relative.contains('\\') {
+        return Err(RenderError::new(format!(
+            "The manifest {kind} path must not contain a backslash; use forward slashes."
+        )));
+    }
+    let file_name = Path::new(relative)
+        .file_name()
+        .ok_or_else(|| RenderError::new(format!("The manifest {kind} path has no file name.")))?
+        .to_string_lossy()
+        .into_owned();
+    if RESERVED_BUNDLE_NAMES
+        .iter()
+        .any(|reserved| file_name.eq_ignore_ascii_case(reserved))
+    {
+        return Err(RenderError::new(format!(
+            "The manifest {kind} path uses the reserved bundle name {file_name}."
+        )));
+    }
+    Ok(file_name)
+}
+
+/// Copy one manifest-referenced media file into the bundle root.
+///
+/// The source is resolved through [`resolve_capture_path`], so a manifest cannot
+/// read outside the capture folder. `fs::copy` streams the bytes instead of
+/// loading the media into memory; upstream ingest limits still bound the file.
+fn copy_capture_artifact(
+    capture_directory: &Path,
+    output_directory: &Path,
+    relative: &str,
+    file_name: &str,
+) -> Result<(), RenderError> {
+    let source = resolve_capture_path(capture_directory, relative)?;
+    let destination = output_directory.join(file_name);
+    fs::copy(&source, &destination).map_err(|error| {
+        RenderError::new(format!(
+            "Could not copy {} to {}: {error}",
+            source.display(),
+            destination.display()
+        ))
+    })?;
+    Ok(())
 }
 
 /// Resolve a relative path inside a capture directory, rejecting escapes.

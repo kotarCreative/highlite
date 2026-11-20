@@ -88,7 +88,8 @@ final class RelayClientTests: XCTestCase {
         let client = RelayClient(session: session)
         try await client.configure(
             baseURL: URL(string: "http://127.0.0.1:8787")!,
-            readToken: "read-secret"
+            readToken: "read-secret",
+            ingestToken: "ingest-secret"
         )
         return client
     }
@@ -111,6 +112,37 @@ final class RelayClientTests: XCTestCase {
         XCTAssertEqual(unwrapped.url?.path, "/v1/sessions")
         XCTAssertEqual(unwrapped.value(forHTTPHeaderField: "Authorization"), "Bearer read-secret")
         XCTAssertNil(unwrapped.value(forHTTPHeaderField: "Origin"))
+    }
+
+    func testIngestCaptureUsesIngestTokenAndZipContentType() async throws {
+        let client = try await makeClient()
+        MockURLProtocol.response(
+            status: 201,
+            json: #"{"sessionId":"native-1","status":"ready","receivedAtMs":1763642096789,"bytes":123,"pageTitle":"Native capture","pageUrl":"highlite://native-capture/still","durationMs":0,"summary":"summary","statusUrl":"/v1/sessions/native-1","bundleUrl":"/v1/sessions/native-1/bundle.zip"}"#
+        )
+        guard let imageURL = Bundle.module.url(forResource: "native-capture", withExtension: "png") else {
+            return XCTFail("Missing native-capture.png fixture")
+        }
+        let bundle = try NativeCaptureBundleBuilder.build(
+            pngData: try Data(contentsOf: imageURL),
+            note: "Check the total before saving.",
+            highlight: NativeCaptureRect(x: 0.25, y: 0.25, width: 0.5, height: 0.25)
+        )
+
+        let metadata = try await client.ingestCapture(bundle)
+        XCTAssertEqual(metadata.sessionId, "native-1")
+        XCTAssertEqual(metadata.status, .ready)
+
+        MockURLProtocol.lock.lock()
+        let request = MockURLProtocol.lastRequest
+        MockURLProtocol.lock.unlock()
+        let unwrapped = try XCTUnwrap(request)
+        XCTAssertEqual(unwrapped.httpMethod, "POST")
+        XCTAssertEqual(unwrapped.url?.path, "/v1/sessions")
+        XCTAssertEqual(unwrapped.value(forHTTPHeaderField: "Authorization"), "Bearer ingest-secret")
+        XCTAssertEqual(unwrapped.value(forHTTPHeaderField: "Content-Type"), "application/zip")
+        XCTAssertNil(unwrapped.value(forHTTPHeaderField: "Origin"))
+        XCTAssertEqual(try requestBody(unwrapped), bundle.archive)
     }
 
     func testHealthDoesNotSendReadToken() async throws {

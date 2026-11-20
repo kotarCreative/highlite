@@ -349,6 +349,38 @@ mod tests {
     }
 
     #[test]
+    fn video_media_is_not_an_automatic_attachment_choice() {
+        let temp = tempfile::tempdir().unwrap();
+        write_png(temp.path(), "contact-sheet.png");
+        write_png(temp.path(), "frames/frame-01.png");
+        fs::write(
+            temp.path().join("recording.mp4"),
+            b"\x00\x00\x00\x18ftypmp42video",
+        )
+        .unwrap();
+
+        let inventory = AttachmentInventory::load(temp.path()).unwrap();
+        assert_eq!(
+            inventory.choices(),
+            vec![
+                AttachmentChoice {
+                    id: "contact-sheet".to_owned(),
+                    name: "contact-sheet.png".to_owned()
+                },
+                AttachmentChoice {
+                    id: "frame-01".to_owned(),
+                    name: "frame-01.png".to_owned()
+                }
+            ]
+        );
+        assert!(
+            inventory
+                .validate_selection(&["recording.mp4".to_owned()])
+                .is_err()
+        );
+    }
+
+    #[test]
     fn inventory_rejects_missing_magic_oversized_and_symlinked_images() {
         let temp = tempfile::tempdir().unwrap();
         fs::create_dir_all(temp.path().join("frames")).unwrap();

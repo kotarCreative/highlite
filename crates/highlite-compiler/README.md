@@ -45,7 +45,8 @@ references, typically `frames/` and `audio.webm`. The command:
 1. transcribes narration when `manifest.transcript` is empty and audio exists,
 2. compiles keyframes and aligns the transcript,
 3. crops each selected frame and burns its annotations into it,
-4. writes the agent bundle.
+4. copies explicitly named `artifacts.audio` and `artifacts.video` files,
+5. writes the agent bundle.
 
 Options:
 
@@ -77,7 +78,18 @@ bundle.json         CompiledBundle
 analysis.json       CaptureAnalysis
 manifest.json       the compiled manifest (rewritten frame paths)
 audio.webm          copied from the capture, when present
+video file          copy of manifest.artifacts.video, when named
 ```
+
+### Optional video
+
+Video is per-capture, not generated. When `manifest.artifacts.video` names a file inside the
+capture directory, `bundle` copies it to the bundle root, rejects paths that escape the
+capture folder, rewrites the artifact to the copied file name, and adds `Video: <name>` to
+`summary.md`. Without that field the bundle has no video. This is not a guarantee that the
+capture recorded video, that the bundle is Scrawl-compatible (see
+[Scrawl export](#scrawl-export)), or that video is attached externally by default. See
+[agent bundle](../../docs/agent-bundle.md#guarantees).
 
 ### Transcription
 
@@ -187,8 +199,9 @@ segments through `shift_transcript`.
 ## Scrawl export
 
 `scrawl` emits the `scrawl.json` v1 shape from `kitlangton/scrawl` (MIT). It is a browser
-subset: no native window log, cursor stream or video unless the capture provided one. It is
-not advertised as Scrawl-compatible until tested with Scrawl's own CLI.
+subset: no native window log, cursor stream or video unless the capture provided one via
+`artifacts.video` (see [Optional video](#optional-video)). It is not advertised as
+Scrawl-compatible until tested with Scrawl's own CLI.
 
 ## Testing
 

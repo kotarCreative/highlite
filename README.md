@@ -223,10 +223,14 @@ for setup, data sharing, and failure handling.
 ### Native macOS app and OpenCode routing
 
 `apps/macos` is a Swift Package Manager menu bar app that supervises the relay and opens
-its dashboard. It requires macOS 14+, Swift 5.9+, and Cargo. Build it with
+its dashboard. It supports explicit still captures and, on macOS 15+, screen recordings;
+recording uses the macOS 15 system picker for one window or display, never system audio,
+and adds microphone narration only after an explicit opt-in. Saves go to the local relay
+without embedding a site; it requires macOS 14+ and the macOS 15 SDK (Xcode 16+) to
+compile, plus Swift 5.9+ and Cargo. Build it with
 `pnpm build:macos`; `pnpm verify:macos` runs static package checks on Linux and the full
-Swift build/test plus bundle/signature verification on macOS. The bundle is ad-hoc
-signed, **not notarized**, and builds for the host architecture only.
+Swift build/test plus bundle/signature verification on macOS. The bundle is ad-hoc signed,
+**not notarized**, and builds for the host architecture only.
 
 Relay read/ingest tokens are kept in Keychain, and the active values are written to the
 private `0600` relay env file the child process requires. AI provider and Jira

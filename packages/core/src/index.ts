@@ -87,7 +87,12 @@ export interface HighliteManifest {
   annotations: Annotation[];
   transcript: TranscriptSegment[];
   keyframes: Keyframe[];
-  artifacts: { audio?: string; video?: string; contactSheet?: string };
+  artifacts: {
+    audio?: string;
+    /** Optional playback recording, normally recording.mp4 in the capture or bundle. */
+    video?: string;
+    contactSheet?: string;
+  };
   audioOffsetMs?: number;
   captureWarnings: string[];
 }

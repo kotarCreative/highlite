@@ -9,6 +9,7 @@ window server.
 ## Requirements
 
 - macOS 14 or newer on Apple silicon or Intel.
+- macOS 15 SDK (Xcode 16 or newer) to compile the recorder.
 - Xcode command line tools / Swift 5.9 or newer.
 - A Rust toolchain with Cargo.
 - The repository's existing development prerequisites for the relay.
@@ -23,8 +24,10 @@ pnpm verify:macos
 open dist/Highlite.app
 ```
 
-`pnpm build:macos` builds `highlite-relay` in release mode, builds the `HighliteMenuBar`
-product in release mode, and assembles:
+Compiling the macOS 15 screen-recorder APIs needs the macOS 15 SDK (Xcode 16 or newer);
+the built app still launches on macOS 14, where recording is disabled. `pnpm build:macos`
+builds `highlite-relay` in release mode, builds the `HighliteMenuBar` product in release
+mode, and assembles:
 
 ```text
 dist/Highlite.app/
@@ -138,7 +141,9 @@ The app installs the standard Edit menu so **Cmd+V**, **Cmd+C**, **Cmd+X**, and
 masked; copying or cutting secrets remains subject to macOS secure-field restrictions.
 
 The menu bar uses the highlighter symbol and shows relay status, a pending-suggestion
-badge, and actions to open the dashboard, start or stop the relay, and quit.
+badge, and actions to open the dashboard, capture a still, record the screen, start or
+stop the relay, and quit. While recording, it shows a red **● REC** indicator and
+**Stop Recording** in the same status menu.
 
 The app bundle carries a matching highlighter icon. `Resources/AppIcon.svg` is the
 vector source, `Resources/AppIcon.icns` is the generated multi-resolution Mac icon, and
@@ -175,6 +180,66 @@ Session detail exposes Jira draft/edit/publish, attachment selection and per-fil
 results, and OpenCode suggestion/override/confirm.
 The interface explains that OpenCode routing is metadata-only and never auto-submits.
 
+### Native still capture
+
+**Capture Screen…** in the menu bar starts the macOS interactive capture UI
+(`/usr/sbin/screencapture -i -x -t png`). The user drags a region or presses Space to
+choose a window; there is no background screen monitoring, focused-window query, or
+Accessibility dependency. Screen Recording permission is managed by macOS in
+**System Settings → Privacy & Security → Screen Recording**.
+
+The review window previews the PNG, accepts one highlight rectangle drawn directly on
+the image, and requires a short note. Saving builds a two-entry ZIP (`manifest.json` and
+`capture.png`) and sends it to the local relay's existing `POST /v1/sessions` ingest
+endpoint with the stored ingest token. The relay then compiles it through the same
+manifest/keyframe pipeline as a browser capture. The app deletes its temporary screenshot
+after uploading; the still path does not embed a website, record microphone audio, read
+the page DOM, or call Jira/OpenCode/provider APIs itself.
+
+The note becomes the session title and the target label used by the compiled summary.
+The relay sees the unflattened screenshot plus the normalized annotation, so the
+canonical compiler remains the only annotation renderer.
+
+### Native screen recording (macOS 15+)
+
+On macOS 15 or newer, **Record Screen…** opens an explicit setup window; on macOS 14 the
+item is disabled and still capture remains available. The microphone switch is off by
+default; turning it on is the only way Highlite requests microphone audio, and
+`NSMicrophoneUsageDescription` explains that use to macOS. System audio is never
+captured. **Choose Window or Display…** opens the macOS 15 system content picker and
+limits the recording to one chosen window or display.
+
+Stopping finalizes an MP4 and opens a native review window. The recorder also stops itself
+at its 45-second or 48-MiB budget and opens the same review. The window plays the movie
+with AVKit, shows the still poster for an optional highlight rectangle, requires a note,
+and uploads only after **Save to Highlite**. The ZIP is additive to the still contract:
+
+```text
+manifest.json       durationMs, poster keyframe, target, optional annotation
+poster.png          still poster used as the keyframe image
+recording.mp4       full movie
+recording.m4a       only when microphone audio was enabled
+```
+
+The manifest identifies the media as `artifacts.video = "recording.mp4"` and optional
+`artifacts.audio`. A poster highlight is stored as a normalized annotation and burned
+into the compiled keyframe, matching the still-capture pipeline. The app does not launch
+a downstream Jira, OpenCode, or provider action; configured relay recipes react to the
+ingested session as they do for any capture.
+
+One screen flow is active at a time. The still-capture picker and review, recording
+setup, active recording, and recording review are mutually exclusive. Saving failure
+retains the review and temporary files for a retry; cancel, dismiss, or successful save
+stops playback and deletes the temporary recording directory. Launch is treated as the
+single-instance boundary: every leftover app-prefixed `HighliteRecording-*` directory is
+removed before recording can start. Run only one Highlite instance at a time.
+
+The native recording approach is inspired by Kit Langton's Scrawl at pinned revision
+[`b5fa0705f6e5724ede414727797b4b6ed274d3d2`](https://github.com/kitlangton/scrawl/tree/b5fa0705f6e5724ede414727797b4b6ed274d3d2).
+No Scrawl code is copied, and Highlite makes no claim of compatibility with Scrawl's
+schema, bundle format, or processing interfaces; the `0.1.0` Highlite manifest and ZIP
+contract remain authoritative.
+
 ## Pending suggestions
 
 The app polls activity (or recipe runs) for new OpenCode `suggested` runs and deduplicates
@@ -207,18 +272,32 @@ apps/macos/
       OpenCodeLocator.swift
       AppSettings.swift
       JSONValue.swift
+      NativeCaptureBundle.swift
+      NativeCaptureCommand.swift
+      NativeRecordingBundle.swift
+      NativeRecordingTempStore.swift
     HighliteMenuBar/
       HighliteMenuBarApp.swift
       AppDelegate.swift
       AppModel.swift
+      NativeCaptureDraft.swift
+      NativeCaptureService.swift
+      NativeRecordingController.swift
+      NativeRecordingDraft.swift
       Views/
+        CaptureReviewView.swift
+        RecordingReviewView.swift
+        RecordingSetupView.swift
   Tests/HighliteMenuBarCoreTests/
   README.md
 ```
 
 `Package.swift` uses Swift tools 5.9, `.macOS(.v14)`, and the executable product
 `HighliteMenuBar`. The bundle identifier is `com.highlite.menubar`, it is an agent app
-(`LSUIElement`), and local networking is allowed for loopback relay traffic.
+(`LSUIElement`), local networking is allowed for loopback relay traffic, and
+`NSMicrophoneUsageDescription` explains the opt-in microphone recording. The app keeps
+its macOS 14 floor: macOS 15 ScreenCaptureKit recorder types are guarded with
+`@available(macOS 15, *)`, and the Record Screen item is disabled on macOS 14.
 
 ## Manual verification
 
@@ -250,12 +329,36 @@ After launching from `dist/Highlite.app`:
 8. Defer a suggestion, restart the app, and confirm the pending run persists.
 9. Inspect `/v1/activity` and confirm no prompt text, drafts, capture summaries, or
    credentials appear.
-10. Quit the app and confirm the owned relay stops gracefully.
+10. Choose **Capture Screen…**, grant Screen Recording if macOS asks, capture a region,
+    draw one highlight, enter a note, and save. Confirm the new session appears in
+    Sessions with the note as its title, and that a bundle downloads with a rendered
+    keyframe containing the highlight. Cancel a second capture from the system UI and
+    confirm no session is created.
+11. Choose **Record Screen…**. Confirm microphone audio is off by default. Pick one
+    window or display from the system picker and confirm the menu bar shows **● REC**
+    and **Stop Recording**. Stop, play the movie in the review window, mark the poster,
+    enter a note, and save. Confirm the new session and a bundle whose manifest names
+    `recording.mp4` and whose ZIP contains the movie, poster, and manifest. Repeat with
+    the microphone switch on and confirm macOS asks for permission and the ZIP adds
+    `recording.m4a`. Confirm there is no system-audio track.
+12. With a recording active, confirm **Capture Screen…** and **Record Screen…** cannot
+    start a second flow. Cancel a recording review and confirm the temporary
+    `HighliteRecording-*` directory is gone. Force-quit during a recording, relaunch,
+    and confirm an older app-prefixed temporary directory is swept while a fresh one is
+    left alone.
+13. Quit the app and confirm the owned relay stops gracefully.
 
 ## Limitations
 
-- macOS 14+ only; ad-hoc signed and not notarized.
+- macOS 14+; ad-hoc signed and not notarized.
+- Screen recording requires macOS 15+ and the macOS 15 SDK. Still capture remains
+  available on macOS 14.
 - No sandbox/App Store packaging in this slice.
+- Native still capture has no microphone, DOM, browser embed, or background monitoring.
+  Native recording captures one window or display and an optional microphone track; it
+  never records system audio, DOM, or other windows, and only one screen flow can run at
+  a time. Relay-side tests cover copying the referenced video and audio artifacts into
+  the compiled bundle.
 - Existing OpenCode sessions only; no creation of new sessions.
 - No exactly-once OpenCode delivery. Ambiguous submissions become `submit-unknown` and
   must be checked manually.

@@ -237,6 +237,10 @@ pub fn build_handoff_summary(
         manifest.session_id
     );
     let _ = writeln!(out, "Page: {}", manifest.page.initial_url);
+    if let Some(video) = manifest.artifacts.video.as_deref() {
+        let name = video.rsplit(['/', '\\']).next().unwrap_or(video);
+        let _ = writeln!(out, "Video: {name}");
+    }
     if let Some(environment) = environment_line(report) {
         let _ = writeln!(out, "Environment: {environment}");
     }

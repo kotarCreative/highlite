@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import HighliteMenuBarCore
 
 /// Shared geometry for AppKit windows and the SwiftUI views they host.
 ///
@@ -25,6 +26,15 @@ enum AppWindowLayout {
 
     static let reviewContentSize = NSSize(width: 820, height: 700)
     static let reviewMinimumContentSize = NSSize(width: 780, height: 660)
+
+    static let captureContentSize = NSSize(width: 960, height: 760)
+    static let captureMinimumContentSize = NSSize(width: 720, height: 600)
+
+    static let recordingSetupContentSize = NSSize(width: 580, height: 500)
+    static let recordingSetupMinimumContentSize = NSSize(width: 540, height: 460)
+
+    static let recordingReviewContentSize = NSSize(width: 1_000, height: 820)
+    static let recordingReviewMinimumContentSize = NSSize(width: 820, height: 700)
 }
 
 @MainActor
@@ -100,6 +110,55 @@ enum AppWindowFactory {
             in: window,
             contentSize: AppWindowLayout.reviewContentSize,
             minimumContentSize: AppWindowLayout.reviewMinimumContentSize
+        )
+    }
+
+    static func makeCaptureWindow(
+        draft: NativeCaptureDraft,
+        onSave: @escaping @MainActor (NativeCaptureBundle) async throws -> SessionMetadata,
+        onClose: @escaping @MainActor () -> Void
+    ) -> NSWindow {
+        makeWindow(
+            title: "Review screen capture",
+            contentSize: AppWindowLayout.captureContentSize,
+            minimumContentSize: AppWindowLayout.captureMinimumContentSize,
+            rootView: CaptureReviewView(
+                draft: draft,
+                onSave: onSave,
+                onClose: onClose
+            )
+        )
+    }
+
+    static func makeRecordingSetupWindow(
+        onStart: @escaping @MainActor (Bool) -> Void,
+        onCancel: @escaping @MainActor () -> Void
+    ) -> NSWindow {
+        makeWindow(
+            title: "Record screen",
+            contentSize: AppWindowLayout.recordingSetupContentSize,
+            minimumContentSize: AppWindowLayout.recordingSetupMinimumContentSize,
+            rootView: RecordingSetupView(
+                onStart: onStart,
+                onCancel: onCancel
+            )
+        )
+    }
+
+    static func makeRecordingReviewWindow(
+        draft: NativeRecordingDraft,
+        onSave: @escaping @MainActor (NativeRecordingBundle) async throws -> SessionMetadata,
+        onClose: @escaping @MainActor () -> Void
+    ) -> NSWindow {
+        makeWindow(
+            title: "Review screen recording",
+            contentSize: AppWindowLayout.recordingReviewContentSize,
+            minimumContentSize: AppWindowLayout.recordingReviewMinimumContentSize,
+            rootView: RecordingReviewView(
+                draft: draft,
+                onSave: onSave,
+                onClose: onClose
+            )
         )
     }
 }
