@@ -347,7 +347,8 @@ final class AppModel: ObservableObject {
             let newClient = RelayClient()
             try await newClient.configure(
                 baseURL: connection.baseURL,
-                readToken: connection.tokens.readToken
+                readToken: connection.tokens.readToken,
+                ingestToken: connection.tokens.ingestToken
             )
             client = newClient
             errorMessage = nil
@@ -381,7 +382,8 @@ final class AppModel: ObservableObject {
             let newClient = RelayClient()
             try await newClient.configure(
                 baseURL: connection.baseURL,
-                readToken: connection.tokens.readToken
+                readToken: connection.tokens.readToken,
+                ingestToken: connection.tokens.ingestToken
             )
             guard intent == relayIntentGeneration, supervisor.snapshot.isRunning else {
                 return
@@ -453,7 +455,8 @@ final class AppModel: ObservableObject {
                 let candidateClient = RelayClient()
                 try await candidateClient.configure(
                     baseURL: connection.baseURL,
-                    readToken: connection.tokens.readToken
+                    readToken: connection.tokens.readToken,
+                    ingestToken: connection.tokens.ingestToken
                 )
                 newClient = candidateClient
             },
@@ -474,7 +477,8 @@ final class AppModel: ObservableObject {
                     let restored = RelayClient()
                     try await restored.configure(
                         baseURL: connection.baseURL,
-                        readToken: connection.tokens.readToken
+                        readToken: connection.tokens.readToken,
+                        ingestToken: connection.tokens.ingestToken
                     )
                     self.client = restored
                 } else {
@@ -526,6 +530,38 @@ final class AppModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Saves one native still capture through the relay's existing ZIP ingest
+    /// endpoint. This app never calls Jira, OpenCode, or a provider itself.
+    func saveNativeCapture(_ bundle: NativeCaptureBundle) async throws -> SessionMetadata {
+        guard let client else { throw RelayAPIError.notConfigured }
+        let metadata = try await client.ingestCapture(bundle)
+        if let refreshed = try? await client.listSessions() {
+            sessions = refreshed
+        }
+        let label = bundle.note.count > 60
+            ? "\(bundle.note.prefix(60))…"
+            : bundle.note
+        notice = "Saved native capture “\(label)” to Highlite sessions."
+        return metadata
+    }
+
+    /// Saves one native screen recording through the relay's existing ZIP ingest
+    /// endpoint. The app never calls Jira, OpenCode, or a provider itself; any
+    /// configured relay recipes react to the new session exactly as they do for
+    /// a browser or still capture.
+    func saveNativeRecording(_ bundle: NativeRecordingBundle) async throws -> SessionMetadata {
+        guard let client else { throw RelayAPIError.notConfigured }
+        let metadata = try await client.ingestRecording(bundle)
+        if let refreshed = try? await client.listSessions() {
+            sessions = refreshed
+        }
+        let label = bundle.note.count > 60
+            ? "\(bundle.note.prefix(60))…"
+            : bundle.note
+        notice = "Saved native recording “\(label)” to Highlite sessions."
+        return metadata
     }
 
     func refreshProviders() async {

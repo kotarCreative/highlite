@@ -4,6 +4,8 @@ import PackageDescription
 let package = Package(
     name: "HighliteMenuBar",
     platforms: [
+        // The app keeps its macOS 14 floor. The native recorder is macOS 15+
+        // and is gated at runtime with @available checks.
         .macOS(.v14),
     ],
     products: [

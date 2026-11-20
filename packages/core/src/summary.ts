@@ -124,6 +124,12 @@ export function buildSummary(manifest: HighliteManifest): string {
     `Duration: ${formatTime(manifest.durationMs)}`,
   ];
 
+  if (manifest.artifacts.video) {
+    const name =
+      manifest.artifacts.video.split(/[\\/]/).filter(Boolean).pop() ?? manifest.artifacts.video;
+    lines.push(`Video: ${name.replace(/[\r\n]+/g, ' ')}`);
+  }
+
   const environment = manifest.timeline.filter(isEnvironmentEvent);
   if (environment.length > 0) {
     lines.push(

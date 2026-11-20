@@ -1,9 +1,10 @@
 # HighliteMenuBar
 
-Native macOS 14 menu bar wrapper for the Highlite capture relay. It supervises a
+Native macOS menu bar wrapper for the Highlite capture relay. It supervises a
 loopback relay, exposes the session dashboard, configures Jira and OpenCode
-recipes, and presents a mandatory native review window before any OpenCode
-prompt is sent.
+recipes, captures still screenshots, and — on macOS 15 or newer — explicit screen
+recordings. It presents a mandatory native review window before any capture is
+uploaded or OpenCode prompt is sent.
 
 The app is a Swift Package Manager executable (`HighliteMenuBar`) plus a small
 Foundation/Security core (`HighliteMenuBarCore`) that is testable without
@@ -12,6 +13,8 @@ SwiftUI. It does not generate an Xcode project.
 ## Requirements
 
 - macOS 14 or newer
+- macOS 15 SDK (Xcode 16 or newer) to compile the recorder; screen recording
+  itself requires macOS 15 or newer
 - Swift 5.9+ / Xcode Command Line Tools
 - Rust toolchain for building `highlite-relay`
 - A local `opencode` v2 CLI for OpenCode recipe work
@@ -202,7 +205,78 @@ send an `Origin` header.
 ## Dashboard
 
 The menu bar shows relay status, a pending-suggestion count, dashboard,
-start/stop, settings, and quit.
+**Capture Screen…**, **Record Screen…**, start/stop, settings, and quit.
+
+### Native still capture
+
+The menu bar's **Capture Screen…** item starts a consented, interactive macOS
+still capture. `screencapture -i` shows the system selection UI; drag a region or
+press Space to choose a window, then complete the selection. The app does not
+poll the screen, inspect the focused window, or request Accessibility access.
+The item is enabled only while the relay is running and an ingest token is
+available.
+
+After the selection, a native review window shows the exact PNG. Drag once to
+add one rectangle highlight, add a note, then choose **Save to Highlite**. The
+app builds the canonical `manifest.json` plus `capture.png` ZIP in a private
+temporary directory and POSTs it to the relay's existing local
+`/v1/sessions` ingest endpoint with the stored ingest token. It then deletes the
+temporary copy and refreshes Sessions. The app itself calls no Jira, OpenCode, or
+provider endpoint. Existing relay recipes behave for this session exactly as
+they do for a browser capture.
+
+The still path has no microphone audio, page DOM, browser embed, or automatic
+screen monitoring. The user chooses the region or window; captured pixels are
+not automatically redacted. The highlight is stored as a normalized annotation
+and burned into compiled keyframes by the canonical compiler. The relay receives
+the clean screenshot, not a flattened preview.
+
+### Native screen recording (macOS 15+)
+
+On macOS 15 or newer, **Record Screen…** opens a small native setup window before
+anything is captured. On macOS 14 the item is disabled and still capture remains
+available. Microphone audio is **off by default** and is requested only when the
+user turns it on; system audio is never captured. Choosing **Choose Window or
+Display…** opens the macOS 15 system content picker for exactly one window or
+display. There is no background monitoring, focused-window query, Accessibility
+dependency, or system-audio capture. Microphone permission is managed by macOS
+in **System Settings → Privacy & Security → Microphone** and is explained by
+`NSMicrophoneUsageDescription` in `Info.plist`.
+
+While recording, the menu bar shows a red **● REC** indicator. The same status
+menu exposes **Stop Recording**; no dashboard window needs to stay open. The
+recorder also stops itself at a 45-second or 48-MiB budget, then opens the same
+review. Stopping finalizes the MP4, closes the share, and opens a native review
+window with:
+
+- AVKit playback of the movie;
+- the still poster with an optional drag-to-highlight rectangle;
+- a required note that becomes the session title and poster label; and
+- an explicit **Save to Highlite** action.
+
+The app builds a ZIP containing `manifest.json`, `poster.png`, `recording.mp4`,
+and, only when the microphone was enabled, `recording.m4a`. The manifest names
+the media additively through `artifacts.video = "recording.mp4"` and optional
+`artifacts.audio`. It is POSTed to the relay's existing local `/v1/sessions`
+ingest endpoint with the stored ingest token. The app itself does not launch
+Jira, OpenCode, or a provider action; configured relay recipes may react to the
+new session exactly as they do for any other capture.
+
+Only one screen flow can be active at a time: the still-capture picker, its
+review window, recording setup, the active recording, and recording review are
+mutually exclusive. A save failure keeps the review and its temporary files so
+the user can retry or cancel. Cancelling, dismissing, or successfully saving a
+review stops playback and deletes the recorder's temporary directory. A forced
+quit can leave a directory behind; launch is treated as the single-instance
+boundary, so the next launch removes every leftover `HighliteRecording-*`
+directory before recording can start. Run only one Highlite instance at a time.
+
+Highlite's native recorder is inspired by the macOS capture approach in Kit
+Langton's Scrawl at the pinned revision
+[`b5fa0705f6e5724ede414727797b4b6ed274d3d2`](https://github.com/kitlangton/scrawl/tree/b5fa0705f6e5724ede414727797b4b6ed274d3d2).
+Highlite does not copy Scrawl code and does not claim compatibility with its
+schema, bundle format, or processing interfaces; Highlite remains on its own
+`0.1.0` manifest and ZIP contract.
 
 Standard macOS editing shortcuts work in focused text fields, including **Cmd+V**
 to paste API keys into secure fields. Secure fields keep secrets masked and retain
@@ -287,6 +361,11 @@ targets requires regenerating the suggestion. Terminal `submitted` and
 
 - No focused-window detection and no Accessibility, AppleScript, or OpenCode
   active-session API.
+- Native still capture uses only the system's interactive `screencapture` UI.
+  Native recording uses the macOS 15 system content picker for one window or
+  display. It never captures system audio, requests microphone permission only
+  after an explicit opt-in, reads no page DOM, and never monitors the screen in
+  the background.
 - No automatic OpenCode submission.
 - Relay transport is loopback HTTP only. `URLSession` is ephemeral, cookies and
   credential storage are disabled, and redirects are rejected.
@@ -303,8 +382,16 @@ secret omission, safe HTTP errors, no-redirect behavior, environment-file
 permissions/token preservation/replacement, symlink rejection, settings
 preflight/rollback ordering, provider id/endpoint rules, Jira input trimming,
 pinned OpenCode retry targets, supervisor startup cancellation, conflict retry,
-owned-child cleanup, CLI path resolution, `server.info` probing, and bundled/dev
-relay lookup.
+owned-child cleanup, CLI path resolution, `server.info` probing, bundled/dev
+relay lookup, native still-capture manifest shape, native recording manifest
+shape with and without microphone audio, additive video/audio ZIP entries,
+recording-controller serialization and automatic-finish handoff,
+launch-time and dismiss-time temporary-directory cleanup, stored-ZIP
+compatibility, ingest token/headers, and input validation. `crates/highlite-compiler` also compiles
+the same committed native-capture manifest and PNG fixture with the canonical
+compiler, so the native app and relay stay on one bundle contract. The recording
+builder has its own golden manifest fixture, and relay-side tests cover copying
+the referenced MP4 and optional audio into the compiled bundle.
 
 ```sh
 swift test --package-path apps/macos
@@ -313,6 +400,7 @@ swift test --package-path apps/macos
 ## Known macOS-only verification
 
 Swift builds, SwiftUI type checking, Keychain access, `Process` signaling,
-`NSStatusItem`/window activation, plist linting, code signing, and end-to-end
+`NSStatusItem`/window activation, ScreenCaptureKit's system picker, AVKit
+playback, microphone TCC permission, plist linting, code signing, and end-to-end
 relay supervision can only be exercised on macOS. A Linux static check is not a
 compilation or runtime guarantee.

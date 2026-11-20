@@ -1,0 +1,90 @@
+{
+  "annotations": [
+    {
+      "atMs": 0,
+      "coordinateSpace": "viewport-normalized",
+      "id": "native-highlight",
+      "kind": "highlight",
+      "points": [
+        {
+          "x": 0.25,
+          "y": 0.25
+        },
+        {
+          "x": 0.75,
+          "y": 0.5
+        }
+      ],
+      "strokeWidth": 4,
+      "targetId": "native-region"
+    }
+  ],
+  "artifacts": {
+    "audio": "recording.m4a",
+    "video": "recording.mp4"
+  },
+  "captureWarnings": [],
+  "createdAt": "2026-11-20T12:34:56.789Z",
+  "durationMs": 8400,
+  "keyframes": [
+    {
+      "annotationIds": ["native-highlight"],
+      "atMs": 0,
+      "eventIds": ["native-annotation"],
+      "id": "native-frame",
+      "imagePath": "poster.png",
+      "reason": "annotation",
+      "targetIds": ["native-region"],
+      "transcriptSegmentIds": []
+    }
+  ],
+  "page": {
+    "initialUrl": "highlite://native-capture/recording",
+    "title": "Native recording: Check the total before saving."
+  },
+  "schemaVersion": "0.1.0",
+  "sessionId": "native-1763642096789-00000000-0000-4000-8000-000000000000",
+  "targets": [
+    {
+      "id": "native-region",
+      "label": "Check the total before saving.",
+      "metadata": {
+        "captureMode": "recording",
+        "microphone": "included",
+        "source": "macos-native"
+      },
+      "pageUrl": "highlite://native-capture/recording",
+      "rect": {
+        "height": 48,
+        "width": 64,
+        "x": 0,
+        "y": 0
+      },
+      "role": "region",
+      "tag": "screen",
+      "textExcerpt": "Check the total before saving."
+    }
+  ],
+  "timeline": [
+    {
+      "atMs": 0,
+      "id": "native-annotation",
+      "kind": "annotation",
+      "payload": {
+        "annotationId": "native-highlight",
+        "annotationKind": "highlight",
+        "x": 16,
+        "y": 12
+      },
+      "seq": 0,
+      "targetId": "native-region"
+    }
+  ],
+  "transcript": [],
+  "viewport": {
+    "height": 48,
+    "width": 64,
+    "x": 0,
+    "y": 0
+  }
+}

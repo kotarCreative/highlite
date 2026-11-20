@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Highlite records microphone audio only when you turn it on for a screen recording. Recordings stay on this Mac until you save them to your local Highlite relay.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

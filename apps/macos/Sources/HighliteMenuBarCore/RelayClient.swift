@@ -20,6 +20,7 @@ public final class NoRedirectURLSessionDelegate: NSObject, URLSessionTaskDelegat
 public actor RelayClient {
     private var baseURL: URL?
     private var readToken: String?
+    private var ingestToken: String?
     private let urlSession: URLSession
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -45,17 +46,26 @@ public actor RelayClient {
         }
     }
 
-    public func configure(baseURL: URL, readToken: String) throws {
+    public func configure(
+        baseURL: URL,
+        readToken: String,
+        ingestToken: String? = nil
+    ) throws {
         guard Self.isLoopbackHTTP(baseURL), !readToken.isEmpty else {
+            throw RelayAPIError.invalidEndpoint
+        }
+        if let ingestToken, ingestToken.isEmpty {
             throw RelayAPIError.invalidEndpoint
         }
         self.baseURL = baseURL
         self.readToken = readToken
+        self.ingestToken = ingestToken
     }
 
     public func clearConfiguration() {
         baseURL = nil
         readToken = nil
+        ingestToken = nil
     }
 
     public var configuredBaseURL: URL? { baseURL }
@@ -76,7 +86,8 @@ public actor RelayClient {
             path: "/healthz",
             query: [],
             body: nil,
-            authenticated: false,
+            authorization: .none,
+            contentType: "application/json",
             timeout: timeout
         )
         return try decode(RelayHealth.self, from: data)
@@ -93,6 +104,43 @@ public actor RelayClient {
 
     public func session(id: String, timeout: TimeInterval = 15) async throws -> SessionMetadata {
         try await get("/v1/sessions/\(Self.pathSegment(id))", query: [], timeout: timeout)
+    }
+
+    /// Uploads a still capture to the local relay's ZIP ingest endpoint. This is
+    /// the same endpoint and manifest contract used by browser captures.
+    public func ingestCapture(
+        _ bundle: NativeCaptureBundle,
+        timeout: TimeInterval = 60
+    ) async throws -> SessionMetadata {
+        let data = try await perform(
+            method: "POST",
+            path: "/v1/sessions",
+            query: [],
+            body: bundle.archive,
+            authorization: .ingest,
+            contentType: "application/zip",
+            timeout: timeout
+        )
+        return try decode(SessionMetadata.self, from: data)
+    }
+
+    /// Uploads a native screen recording archive to the same local ingest
+    /// endpoint. Video archives are much larger than still captures, so the
+    /// default timeout is longer; the relay's own upload limit still applies.
+    public func ingestRecording(
+        _ bundle: NativeRecordingBundle,
+        timeout: TimeInterval = 600
+    ) async throws -> SessionMetadata {
+        let data = try await perform(
+            method: "POST",
+            path: "/v1/sessions",
+            query: [],
+            body: bundle.archive,
+            authorization: .ingest,
+            contentType: "application/zip",
+            timeout: timeout
+        )
+        return try decode(SessionMetadata.self, from: data)
     }
 
     // MARK: - Providers
@@ -280,6 +328,12 @@ public actor RelayClient {
 
     private struct EmptyBody: Encodable {}
 
+    private enum Authorization: Equatable {
+        case none
+        case read
+        case ingest
+    }
+
     private func get<T: Decodable>(
         _ path: String,
         query: [URLQueryItem],
@@ -290,7 +344,8 @@ public actor RelayClient {
             path: path,
             query: query,
             body: nil,
-            authenticated: true,
+            authorization: .read,
+            contentType: "application/json",
             timeout: timeout
         )
         return try decode(T.self, from: data)
@@ -312,7 +367,8 @@ public actor RelayClient {
             path: path,
             query: [],
             body: encoded,
-            authenticated: true,
+            authorization: .read,
+            contentType: "application/json",
             timeout: timeout
         )
         return try decode(T.self, from: data)
@@ -323,7 +379,8 @@ public actor RelayClient {
         path: String,
         query: [URLQueryItem],
         body: Data?,
-        authenticated: Bool,
+        authorization: Authorization,
+        contentType: String,
         timeout: TimeInterval
     ) async throws -> Data {
         guard let baseURL else { throw RelayAPIError.notConfigured }
@@ -332,18 +389,30 @@ public actor RelayClient {
         components?.queryItems = query.isEmpty ? nil : query
         guard let url = components?.url else { throw RelayAPIError.invalidEndpoint }
 
+        let token: String?
+        switch authorization {
+        case .none:
+            token = nil
+        case .read:
+            token = readToken
+        case .ingest:
+            token = ingestToken
+        }
+        if authorization != .none, token?.isEmpty != false {
+            throw RelayAPIError.notConfigured
+        }
+
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
         request.httpBody = body
-        if authenticated {
-            guard let readToken else { throw RelayAPIError.notConfigured }
-            request.setValue("Bearer \(readToken)", forHTTPHeaderField: "Authorization")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
         let data: Data
@@ -367,7 +436,11 @@ public actor RelayClient {
             throw RelayAPIError.invalidResponse
         }
         guard (200...299).contains(http.statusCode) else {
-            let message = Self.errorMessage(from: data, status: http.statusCode)
+            let message = Self.errorMessage(
+                from: data,
+                status: http.statusCode,
+                authorization: authorization
+            )
             throw RelayAPIError.http(status: http.statusCode, message: message)
         }
         return data
@@ -381,9 +454,20 @@ public actor RelayClient {
         }
     }
 
-    private static func errorMessage(from data: Data, status: Int) -> String {
+    private static func errorMessage(
+        from data: Data,
+        status: Int,
+        authorization: Authorization
+    ) -> String {
         if status == 401 {
-            return "The relay rejected the stored read token. It may belong to a different relay."
+            switch authorization {
+            case .ingest:
+                return "The relay rejected the stored ingest token. It may belong to a different relay."
+            case .read:
+                return "The relay rejected the stored read token. It may belong to a different relay."
+            case .none:
+                break
+            }
         }
         if let response = try? JSONDecoder().decode(RelayErrorEnvelope.self, from: data) {
             let cleaned = response.error

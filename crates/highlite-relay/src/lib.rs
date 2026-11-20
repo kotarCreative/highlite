@@ -2457,6 +2457,33 @@ mod tests {
         bytes.into_inner()
     }
 
+    pub(super) fn capture_zip_with_video(session_id: &str, video: &[u8]) -> Vec<u8> {
+        let mut manifest = minimal_manifest(session_id);
+        manifest.artifacts.video = Some("recording.mp4".to_owned());
+        let mut bytes = Cursor::new(Vec::new());
+        {
+            let mut writer = ZipWriter::new(&mut bytes);
+            writer
+                .start_file(
+                    "manifest.json",
+                    SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+                )
+                .unwrap();
+            writer
+                .write_all(serde_json::to_string(&manifest).unwrap().as_bytes())
+                .unwrap();
+            writer
+                .start_file(
+                    "recording.mp4",
+                    SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+                )
+                .unwrap();
+            writer.write_all(video).unwrap();
+            writer.finish().unwrap();
+        }
+        bytes.into_inner()
+    }
+
     pub(super) fn capture_zip_with_audio(session_id: &str, audio: &[u8]) -> Vec<u8> {
         let mut manifest = minimal_manifest(session_id);
         manifest.artifacts.audio = Some("audio.wav".to_owned());
@@ -2816,6 +2843,33 @@ mod tests {
             response.headers().get(header::CONTENT_TYPE).unwrap(),
             "application/zip"
         );
+    }
+
+    #[tokio::test]
+    async fn keeps_a_native_video_recording_in_the_bundle() {
+        let temp = TempDir::new().unwrap();
+        let (app, config) = test_app(&temp);
+        let video = b"\x00\x00\x00\x18ftypmp42relay-video";
+        let response = upload_capture(app, capture_zip_with_video("session-video", video)).await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let bundle_dir = config.data_dir.join("bundles/session-video");
+        assert_eq!(
+            fs::read(bundle_dir.join("recording.mp4")).expect("bundled video"),
+            video
+        );
+        let manifest = bundle_manifest(&config, "session-video");
+        assert_eq!(manifest["artifacts"]["video"], "recording.mp4");
+        assert!(
+            manifest["artifacts"].get("audio").is_none(),
+            "a video-only capture must not invent an audio artifact"
+        );
+
+        let scrawl: Value = serde_json::from_str(
+            &fs::read_to_string(bundle_dir.join("scrawl.json")).expect("scrawl"),
+        )
+        .unwrap();
+        assert_eq!(scrawl["video"], "recording.mp4");
     }
 
     #[cfg(unix)]

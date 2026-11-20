@@ -28,6 +28,17 @@ describe('buildSummary', () => {
     expect(summary).toContain('00:01 — Mark: Net retention');
     expect(summary).not.toContain('secret');
     expect(summary).toContain('Visual evidence: unavailable');
+    expect(summary).not.toContain('Video:');
+  });
+
+  it('points at a bundled video artifact when the capture includes one', () => {
+    const manifest = createManifest();
+    manifest.artifacts.video = 'media/recording.mp4';
+
+    const summary = buildSummary(manifest);
+
+    expect(summary).toContain('Video: recording.mp4');
+    expect(summary).not.toContain('media/recording.mp4');
   });
 
   it('associates a nearby explicit mark with its real frame path', () => {

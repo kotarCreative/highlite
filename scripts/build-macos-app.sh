@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Build the native Highlite menu bar app and a distributable (ad-hoc signed) bundle.
 #
-# This script only runs on macOS with a Rust toolchain and Swift 5.9+ installed.
+# This script only runs on macOS with a Rust toolchain, Swift 5.9+, and the
+# macOS 15 SDK (Xcode 16 or newer). The recorder compiles macOS 15
+# ScreenCaptureKit APIs behind @available(macOS 15, *), so the SDK must be 15+
+# even though the app's deployment floor stays macOS 14.
 # It builds for the host CPU architecture; it is not a universal binary and it
 # does not notarize the result.
 set -euo pipefail
@@ -25,6 +28,54 @@ fail() {
 
 note() {
   printf '==> %s\n' "$*"
+}
+
+MIN_XCODE_VERSION="16.0"
+MIN_MACOS_SDK_VERSION="15.0"
+
+# Numeric dotted-version comparison: succeeds when "$1" is at least "$2".
+version_at_least() {
+  awk -v have="$1" -v want="$2" 'BEGIN {
+    nh = split(have, h, ".")
+    nw = split(want, w, ".")
+    for (i = 1; i <= 3; i++) {
+      hv = (i <= nh && h[i] ~ /^[0-9]+$/) ? h[i] + 0 : 0
+      wv = (i <= nw && w[i] ~ /^[0-9]+$/) ? w[i] + 0 : 0
+      if (hv > wv) exit 0
+      if (hv < wv) exit 1
+    }
+    exit 0
+  }'
+}
+
+# The ScreenCaptureKit recording APIs used by the app are macOS 15 SDK APIs.
+# Fail before any build work when the selected SDK is older, so the user gets
+# one clear requirement instead of a wall of Swift availability errors.
+require_macos_15_sdk() {
+  local sdk_version xcode_version=""
+
+  command -v xcrun >/dev/null 2>&1 ||
+    fail "xcrun not found on PATH: install Xcode $MIN_XCODE_VERSION or newer (macOS $MIN_MACOS_SDK_VERSION SDK) or the matching Command Line Tools"
+
+  sdk_version="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
+  [[ -n "$sdk_version" ]] ||
+    fail "could not determine the macOS SDK version: install Xcode $MIN_XCODE_VERSION or newer (macOS $MIN_MACOS_SDK_VERSION SDK) and select it with xcode-select -s"
+
+  version_at_least "$sdk_version" "$MIN_MACOS_SDK_VERSION" ||
+    fail "macOS SDK $sdk_version is too old: the ScreenCaptureKit recording APIs require the macOS $MIN_MACOS_SDK_VERSION SDK or newer (Xcode $MIN_XCODE_VERSION or newer). Select a newer Xcode with xcode-select -s"
+
+  if command -v xcodebuild >/dev/null 2>&1; then
+    xcode_version="$(xcodebuild -version 2>/dev/null | awk '/^Xcode /{print $2; exit}')" ||
+      xcode_version=""
+  fi
+
+  if [[ -n "$xcode_version" ]]; then
+    version_at_least "$xcode_version" "$MIN_XCODE_VERSION" ||
+      fail "Xcode $xcode_version is too old: Xcode $MIN_XCODE_VERSION or newer (macOS $MIN_MACOS_SDK_VERSION SDK) is required for the ScreenCaptureKit recording APIs"
+    note "Using Xcode $xcode_version with macOS SDK $sdk_version"
+  else
+    note "Using macOS SDK $sdk_version (Xcode version not detected)"
+  fi
 }
 
 cleanup() {
@@ -56,6 +107,8 @@ trap cleanup EXIT
 if [[ "$(uname -s)" != "Darwin" ]]; then
   fail "the native menu bar app can only be built on macOS (current system: $(uname -s))"
 fi
+
+require_macos_15_sdk
 
 for tool in cargo swift plutil codesign install lipo xattr; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool not found on PATH: $tool"
