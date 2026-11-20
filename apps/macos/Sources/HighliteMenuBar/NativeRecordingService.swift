@@ -687,14 +687,14 @@ public final class NativeRecordingService: NSObject, ObservableObject {
                let recordingOutput = recordingOutput {
                 try? stream.removeRecordingOutput(recordingOutput)
             }
-        } else if !recordingDidFinish,
-                  let stream = stream,
+        } else if let stream = stream,
                   stopGate.beginStop(streamAlreadyStopped: false) {
-            // A natural finish already stopped the recorder; asking the stream
-            // to stop again would be a redundant teardown. The gate makes this
-            // the only `stopCapture()` in the session, so failure or
-            // cancellation teardown cannot start a second stop while this one
-            // is still finishing.
+            // The gate makes this the only `stopCapture()` in the session, so
+            // failure or cancellation teardown cannot start a second stop
+            // while this one is still finishing. `recordingDidFinish` is not a
+            // substitute for a stream stop: the recorder can finish on its own
+            // while the stream is still delivering frames, and the retired pair
+            // must never be released while capture is still running.
             do {
                 try await stream.stopCapture()
             } catch {
